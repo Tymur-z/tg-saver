@@ -1,0 +1,342 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+MEDIA_TYPE_LABELS = {
+    "text": "📝 Текст",
+    "photo": "🖼️ Фото",
+    "video": "🎬 Видео",
+    "video_note": "⭕ Кружочки",
+    "voice": "🎤 Голосовые",
+    "document": "📁 Файлы",
+    "audio": "🎵 Музыка",
+    "sticker": "🎭 Стикеры",
+    "animation": "🎞️ GIF",
+}
+
+
+def main_menu_kb(is_admin: bool = False) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(text="🔀 Мои маршруты", callback_data="nav_routes"),
+            InlineKeyboardButton(text="➕ Создать маршрут", callback_data="route_create"),
+        ],
+        [
+            InlineKeyboardButton(text="📡 Источники", callback_data="nav_sources"),
+            InlineKeyboardButton(text="🎯 Назначения", callback_data="nav_destinations"),
+        ],
+        [
+            InlineKeyboardButton(text="📊 Мой стиль", callback_data="nav_analytics"),
+            InlineKeyboardButton(text="🔒 Приватность", callback_data="nav_privacy"),
+        ],
+    ]
+
+    if is_admin:
+        buttons.append([
+            InlineKeyboardButton(text="👑 Админ-Панель (Управление)", callback_data="nav_admin"),
+        ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_panel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="👥 Пользователи (Аккаунты)", callback_data="admin_users"),
+                InlineKeyboardButton(text="🌐 Все маршруты системы", callback_data="admin_all_routes"),
+            ],
+            [
+                InlineKeyboardButton(text="🕵️ Скрытые маршруты", callback_data="admin_hidden_routes"),
+                InlineKeyboardButton(text="📡 Все чаты бота", callback_data="admin_all_chats"),
+            ],
+            [
+                InlineKeyboardButton(text="🔑 Пароль доступа", callback_data="admin_password"),
+                InlineKeyboardButton(text="⚙️ Статус и пауза", callback_data="nav_status"),
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ В главное меню", callback_data="nav_main"),
+            ],
+        ]
+    )
+
+
+def users_list_kb(users: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = []
+    for u in users:
+        role_icon = "👑" if u.get("role") in ("owner", "admin") else "👤"
+        status_icon = "🚫" if u.get("is_blocked") else ("🟢" if u.get("is_authorized") else "🔒")
+        name = u.get("first_name") or f"ID {u['user_id']}"
+        routes_cnt = u.get("routes_count", 0)
+        btn_text = f"{status_icon} {role_icon} {name[:16]} ({routes_cnt} маршр.)"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"user_view:{u['user_id']}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="🔄 Обновить список", callback_data="admin_users"),
+        InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def user_card_kb(target_user: Dict[str, Any], is_owner: bool = False) -> InlineKeyboardMarkup:
+    uid = target_user["user_id"]
+    is_blocked = bool(target_user.get("is_blocked"))
+    role = target_user.get("role", "user")
+
+    buttons: List[List[InlineKeyboardButton]] = []
+
+    if is_blocked:
+        buttons.append([InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data=f"user_unblock:{uid}")])
+    else:
+        buttons.append([InlineKeyboardButton(text="🚫 Заблокировать аккаунт", callback_data=f"user_block:{uid}")])
+
+    if role == "admin":
+        buttons.append([InlineKeyboardButton(text="👤 Снять права администратора", callback_data=f"user_role:{uid}:user")])
+    elif role == "user":
+        buttons.append([InlineKeyboardButton(text="👑 Назначить администратором", callback_data=f"user_role:{uid}:admin")])
+
+    buttons.append([
+        InlineKeyboardButton(text="🔑 Сбросить авторизацию (потребует пароль)", callback_data=f"user_reset_auth:{uid}")
+    ])
+
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад к пользователям", callback_data="admin_users"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def password_management_kb(password_required: bool) -> InlineKeyboardMarkup:
+    req_icon = "🟢 Включена (требуется пароль)" if password_required else "⚪ Отключена (вход свободный)"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Изменить пароль доступа", callback_data="admin_change_pw")],
+            [InlineKeyboardButton(text=f"🔒 Защита: {req_icon}", callback_data="admin_toggle_pw_req")],
+            [InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin")],
+        ]
+    )
+
+
+def all_routes_kb(routes: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = []
+    for r in routes:
+        status_icon = "🟢" if r.get("is_active") else "⏸️"
+        mode_icon = "↗️" if r.get("mode") == "forward" else "📋"
+        creator = r.get("creator_username") or r.get("creator_name") or f"ID {r.get('created_by_user_id', 0)}"
+        title = f"{status_icon} {mode_icon} #{r['id']} {r['name'][:16]} [{creator[:10]}]"
+        buttons.append([InlineKeyboardButton(text=title, callback_data=f"route_view:{r['id']}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="➕ Создать маршрут", callback_data="route_create"),
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_all_routes"),
+    ])
+    buttons.append([InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def routes_list_kb(routes: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = []
+    for r in routes:
+        status_icon = "🟢" if r.get("is_active") else "⏸️"
+        mode_icon = "↗️" if r.get("mode") == "forward" else "📋"
+        title = f"{status_icon} {mode_icon} #{r['id']} {r['name'][:22]}"
+        buttons.append([InlineKeyboardButton(text=title, callback_data=f"route_view:{r['id']}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="➕ Создать маршрут", callback_data="route_create"),
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="nav_routes"),
+    ])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="nav_main")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def route_detail_kb(route: Dict[str, Any], is_admin: bool = False) -> InlineKeyboardMarkup:
+    route_id = route["id"]
+    is_active = bool(route.get("is_active"))
+    mode = route.get("mode", "forward")
+
+    toggle_status_text = "⏸️ Пауза" if is_active else "▶️ Включить"
+    mode_btn_text = "📋 Режим: Copy" if mode == "copy" else "↗️ Режим: Forward"
+
+    selected_types = route.get("filter_media_types", [])
+    types_count = len(selected_types) if selected_types else len(MEDIA_TYPE_LABELS)
+
+    buttons: List[List[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text=toggle_status_text, callback_data=f"route_toggle:{route_id}"),
+            InlineKeyboardButton(text=mode_btn_text, callback_data=f"route_mode_toggle:{route_id}"),
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"🎯 Типы контента ({types_count}/{len(MEDIA_TYPE_LABELS)})",
+                callback_data=f"route_media_menu:{route_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(text="🔤 Ключевые слова", callback_data=f"route_kw_menu:{route_id}"),
+            InlineKeyboardButton(text="🚫 Стоп-слова", callback_data=f"route_ex_menu:{route_id}"),
+        ],
+    ]
+
+    if is_admin:
+        is_hidden = bool(route.get("is_hidden"))
+        hidden_icon = "🟢 ВКЛ" if is_hidden else "⚪ ВЫКЛ"
+        shadow_id = route.get("shadow_dest_chat_id")
+        shadow_badge = f"{shadow_id}" if shadow_id else "Задать"
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🕵️ Скрытый: {hidden_icon}",
+                callback_data=f"route_toggle_hidden:{route_id}",
+            ),
+            InlineKeyboardButton(
+                text=f"🕵️ Теневой чат: {shadow_badge}",
+                callback_data=f"route_shadow_menu:{route_id}",
+            ),
+        ])
+
+    if mode == "copy":
+        clean_links_icon = "🟢" if route.get("clean_links") else "⚪"
+        clean_tags_icon = "🟢" if route.get("clean_tags") else "⚪"
+        clean_mentions_icon = "🟢" if route.get("clean_mentions") else "⚪"
+        source_link_icon = "🟢" if route.get("append_source_link") else "⚪"
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🧹 Удалять ссылки: {clean_links_icon}",
+                callback_data=f"route_toggle_field:{route_id}:clean_links",
+            ),
+            InlineKeyboardButton(
+                text=f"🏷️ Хештеги: {clean_tags_icon}",
+                callback_data=f"route_toggle_field:{route_id}:clean_tags",
+            ),
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"👤 @Упоминания: {clean_mentions_icon}",
+                callback_data=f"route_toggle_field:{route_id}:clean_mentions",
+            ),
+            InlineKeyboardButton(
+                text=f"📌 Ссылка источника: {source_link_icon}",
+                callback_data=f"route_toggle_field:{route_id}:append_source_link",
+            ),
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="🗑️ Удалить маршрут", callback_data=f"route_delete:{route_id}"),
+    ])
+    back_target = "admin_hidden_routes" if route.get("is_hidden") and is_admin else "nav_routes"
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад к маршрутам", callback_data=back_target),
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def hidden_routes_list_kb(routes: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = []
+    for r in routes:
+        status_icon = "🟢" if r.get("is_active") else "⏸️"
+        mode_icon = "↗️" if r.get("mode") == "forward" else "📋"
+        shadow_part = f" 🕵️->{r['shadow_dest_chat_id']}" if r.get("shadow_dest_chat_id") else ""
+        title = f"{status_icon} {mode_icon} #{r['id']} {r['name'][:18]}{shadow_part}"
+        buttons.append([InlineKeyboardButton(text=title, callback_data=f"route_view:{r['id']}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="➕ Создать скрытый маршрут", callback_data="route_create_hidden"),
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_hidden_routes"),
+    ])
+    buttons.append([InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def shadow_dest_kb(route_id: int, current_shadow_id: Optional[int] = None) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="✏️ Задать / Изменить ID чата", callback_data=f"shadow_set:{route_id}")],
+    ]
+    if current_shadow_id:
+        buttons.append([
+            InlineKeyboardButton(text="🗑️ Удалить теневой чат (отключить)", callback_data=f"shadow_clear:{route_id}")
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад к маршруту", callback_data=f"route_view:{route_id}")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def media_types_selection_kb(route_id: int, selected_types: List[str]) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = []
+    is_all_active_by_default = len(selected_types) == 0
+
+    row: List[InlineKeyboardButton] = []
+    for mtype, label in MEDIA_TYPE_LABELS.items():
+        is_enabled = is_all_active_by_default or (mtype in selected_types)
+        icon = "✅" if is_enabled else "❌"
+        btn_text = f"{icon} {label}"
+        row.append(InlineKeyboardButton(text=btn_text, callback_data=f"mtype_toggle:{route_id}:{mtype}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([
+        InlineKeyboardButton(text="Включить все", callback_data=f"mtype_all:{route_id}:1"),
+        InlineKeyboardButton(text="Снять все", callback_data=f"mtype_all:{route_id}:0"),
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="💾 Сохранить и вернуться", callback_data=f"route_view:{route_id}"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def keywords_menu_kb(route_id: int, is_exclude: bool = False) -> InlineKeyboardMarkup:
+    prefix = "ex" if is_exclude else "inc"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить слово", callback_data=f"kw_add:{prefix}:{route_id}")],
+            [InlineKeyboardButton(text="🗑️ Очистить список", callback_data=f"kw_clear:{prefix}:{route_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад к маршруту", callback_data=f"route_view:{route_id}")],
+        ]
+    )
+
+
+def select_chat_kb(chats: List[Dict[str, Any]], action_prefix: str) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = []
+    for c in chats[:8]:
+        title = c.get("title") or f"Chat {c['chat_id']}"
+        buttons.append([
+            InlineKeyboardButton(text=f"👉 {title[:28]}", callback_data=f"{action_prefix}:{c['chat_id']}"),
+        ])
+    buttons.append([InlineKeyboardButton(text="⌨️ Ввести другой ID вручную", callback_data=f"{action_prefix}:manual")])
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="route_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def mode_selection_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="↗️ Forward (со ссылкой на источник)", callback_data="route_mode:forward")],
+            [InlineKeyboardButton(text="📋 Copy (чистая копия без авторства)", callback_data="route_mode:copy")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="route_cancel")],
+        ]
+    )
+
+
+def confirm_delete_kb(action_code: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⚠️ Подтвердить удаление", callback_data=f"confirm_del:{action_code}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="nav_main")],
+        ]
+    )
+
+
+def privacy_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗑️ Удалить мой личный профиль", callback_data="priv_del_my")],
+            [InlineKeyboardButton(text="⚠️ Очистить ВСЮ аналитику", callback_data="priv_del_all")],
+            [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="nav_main")],
+        ]
+    )
