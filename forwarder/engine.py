@@ -150,6 +150,5 @@ class ForwardEngine:
                 media_group_id=message.media_group_id,
                 album_messages=album_messages,
                 custom_caption=custom_caption,
-                shadow_dest_chat_id=route.get("shadow_dest_chat_id"),
             )
             await self.queue.enqueue(job)

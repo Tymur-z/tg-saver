@@ -18,7 +18,6 @@ from forwarder.queue import ForwardQueue
 from bot.keyboards.inline import (
     admin_panel_kb,
     all_routes_kb,
-    hidden_routes_list_kb,
     main_menu_kb,
     password_management_kb,
     user_card_kb,
@@ -73,7 +72,6 @@ async def cmd_help(message: Message, is_admin: bool = False) -> None:
             "• /users — управление пользователями и аккаунтами",
             "• /password — настройка и смена пароля доступа",
             "• /all_routes — просмотр всех маршрутов всех пользователей",
-            "• /hidden_routes — скрытые маршруты и теневые чаты",
             "• /all_chats — просмотр всех каналов и групп бота",
             "• /status — статус очередей, пауза и статистика",
         ])
@@ -98,7 +96,6 @@ async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings
 
         users_cnt = len(await user_repo.list_users(limit=500))
         routes_cnt = len(await route_repo.list_routes())
-        hidden_routes_cnt = len(await route_repo.list_routes(hidden_only=True))
         chats_cnt = len(await chat_repo.list_all())
         pw_req = await user_repo.is_password_required(settings.PASSWORD_REQUIRED)
 
@@ -108,7 +105,6 @@ async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings
         "👑 <b>Панель Супер-Администратора</b>\n\n"
         f"• Пользователей в системе: <code>{users_cnt}</code>\n"
         f"• Всего маршрутов (все авторы): <code>{routes_cnt}</code>\n"
-        f"• 🕵️ Скрытых маршрутов: <code>{hidden_routes_cnt}</code>\n"
         f"• Подключенных чатов и каналов: <code>{chats_cnt}</code>\n"
         f"• Пароль доступа: {pw_status}\n\n"
         "Выберите нужный раздел для управления:"
@@ -253,35 +249,6 @@ async def cmd_admin_all_routes(event: Message | CallbackQuery, db: Database, is_
         text += "В системе пока нет активных маршрутов."
 
     kb = all_routes_kb(routes)
-    if isinstance(event, Message):
-        await event.answer(text, reply_markup=kb, parse_mode="HTML")
-    else:
-        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await event.answer()
-
-
-@router.message(Command("hidden_routes"))
-@router.callback_query(F.data == "admin_hidden_routes")
-async def cmd_admin_hidden_routes(event: Message | CallbackQuery, db: Database, is_admin: bool = False) -> None:
-    if not is_admin:
-        return
-
-    async with db.connect() as conn:
-        repo = RouteRepository(conn)
-        routes = await repo.list_routes(hidden_only=True)
-
-    text = f"🕵️ <b>Скрытые маршруты (Stealth Routers) ({len(routes)}):</b>\n\n"
-    if not routes:
-        text += (
-            "Скрытых маршрутов пока нет.\n\n"
-            "<i>💡 Скрытые маршруты не видны обычным пользователям. "
-            "Вы можете создать новый скрытый маршрут по кнопке ниже "
-            "или переключить видимость любого существующего маршрута в его карточке.</i>"
-        )
-    else:
-        text += "Эти маршруты полностью скрыты от обычных пользователей:\nВыберите маршрут для управления:"
-
-    kb = hidden_routes_list_kb(routes)
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb, parse_mode="HTML")
     else:

@@ -31,7 +31,6 @@ class ForwardJob:
     media_group_id: Optional[str] = None
     album_messages: Optional[List[Message]] = None
     custom_caption: Optional[str] = None
-    shadow_dest_chat_id: Optional[int] = None
     retry_count: int = 0
     created_at: float = field(default_factory=time.time)
 
@@ -150,26 +149,6 @@ class ForwardQueue:
                 job.dest_chat_id,
                 job.mode,
             )
-
-            if job.shadow_dest_chat_id and job.shadow_dest_chat_id != job.dest_chat_id:
-                try:
-                    await self._throttle_destination(job.shadow_dest_chat_id)
-                    if job.album_messages and len(job.album_messages) > 1:
-                        await self._send_album_to(job.shadow_dest_chat_id, job)
-                    else:
-                        await self._send_single_message_to(job.shadow_dest_chat_id, job)
-                    logger.info(
-                        "Stealth mirror sent msg %s to shadow destination %s",
-                        job.source_message_id,
-                        job.shadow_dest_chat_id,
-                    )
-                except Exception as shadow_err:
-                    logger.warning(
-                        "Failed to forward msg %s to shadow destination %s: %s",
-                        job.source_message_id,
-                        job.shadow_dest_chat_id,
-                        shadow_err,
-                    )
 
         except TelegramRetryAfter as e:
             logger.warning(

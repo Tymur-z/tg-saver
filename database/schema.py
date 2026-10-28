@@ -32,8 +32,6 @@ CREATE TABLE IF NOT EXISTS routes (
     clean_tags BOOLEAN NOT NULL DEFAULT 0,
     clean_mentions BOOLEAN NOT NULL DEFAULT 0,
     append_source_link BOOLEAN NOT NULL DEFAULT 0,
-    is_hidden BOOLEAN NOT NULL DEFAULT 0,
-    shadow_dest_chat_id INTEGER DEFAULT NULL,
     is_active BOOLEAN NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (source_chat_id) REFERENCES chats(chat_id) ON DELETE CASCADE,
@@ -115,8 +113,6 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         ("clean_mentions", "BOOLEAN", "0"),
         ("append_source_link", "BOOLEAN", "0"),
         ("created_by_user_id", "INTEGER", "0"),
-        ("is_hidden", "BOOLEAN", "0"),
-        ("shadow_dest_chat_id", "INTEGER", "NULL"),
     ]:
         try:
             if default == "NULL":

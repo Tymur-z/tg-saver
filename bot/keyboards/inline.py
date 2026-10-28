@@ -48,7 +48,6 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🌐 Все маршруты системы", callback_data="admin_all_routes"),
             ],
             [
-                InlineKeyboardButton(text="🕵️ Скрытые маршруты", callback_data="admin_hidden_routes"),
                 InlineKeyboardButton(text="📡 Все чаты бота", callback_data="admin_all_chats"),
             ],
             [
@@ -178,22 +177,6 @@ def route_detail_kb(route: Dict[str, Any], is_admin: bool = False) -> InlineKeyb
         ],
     ]
 
-    if is_admin:
-        is_hidden = bool(route.get("is_hidden"))
-        hidden_icon = "🟢 ВКЛ" if is_hidden else "⚪ ВЫКЛ"
-        shadow_id = route.get("shadow_dest_chat_id")
-        shadow_badge = f"{shadow_id}" if shadow_id else "Задать"
-
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"🕵️ Скрытый: {hidden_icon}",
-                callback_data=f"route_toggle_hidden:{route_id}",
-            ),
-            InlineKeyboardButton(
-                text=f"🕵️ Теневой чат: {shadow_badge}",
-                callback_data=f"route_shadow_menu:{route_id}",
-            ),
-        ])
 
     if mode == "copy":
         clean_links_icon = "🟢" if route.get("clean_links") else "⚪"
@@ -225,42 +208,11 @@ def route_detail_kb(route: Dict[str, Any], is_admin: bool = False) -> InlineKeyb
     buttons.append([
         InlineKeyboardButton(text="🗑️ Удалить маршрут", callback_data=f"route_delete:{route_id}"),
     ])
-    back_target = "admin_hidden_routes" if route.get("is_hidden") and is_admin else "nav_routes"
+    back_target = "nav_routes"
     buttons.append([
         InlineKeyboardButton(text="⬅️ Назад к маршрутам", callback_data=back_target),
     ])
 
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def hidden_routes_list_kb(routes: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
-    buttons: List[List[InlineKeyboardButton]] = []
-    for r in routes:
-        status_icon = "🟢" if r.get("is_active") else "⏸️"
-        mode_icon = "↗️" if r.get("mode") == "forward" else "📋"
-        shadow_part = f" 🕵️->{r['shadow_dest_chat_id']}" if r.get("shadow_dest_chat_id") else ""
-        title = f"{status_icon} {mode_icon} #{r['id']} {r['name'][:18]}{shadow_part}"
-        buttons.append([InlineKeyboardButton(text=title, callback_data=f"route_view:{r['id']}")])
-
-    buttons.append([
-        InlineKeyboardButton(text="➕ Создать скрытый маршрут", callback_data="route_create_hidden"),
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_hidden_routes"),
-    ])
-    buttons.append([InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def shadow_dest_kb(route_id: int, current_shadow_id: Optional[int] = None) -> InlineKeyboardMarkup:
-    buttons: List[List[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text="✏️ Задать / Изменить ID чата", callback_data=f"shadow_set:{route_id}")],
-    ]
-    if current_shadow_id:
-        buttons.append([
-            InlineKeyboardButton(text="🗑️ Удалить теневой чат (отключить)", callback_data=f"shadow_clear:{route_id}")
-        ])
-    buttons.append([
-        InlineKeyboardButton(text="⬅️ Назад к маршруту", callback_data=f"route_view:{route_id}")
-    ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
