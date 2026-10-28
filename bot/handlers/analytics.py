@@ -11,7 +11,7 @@ from config.settings import Settings
 from database.connection import Database
 from database.repositories.profile_repo import ProfileRepository
 from analytics.comparator import StyleComparator
-from analytics.report_generator import ReportGenerator
+from analytics.report_generator import ReportGenerator, make_progress_bar
 from bot.keyboards.inline import main_menu_kb, my_style_kb
 
 logger = logging.getLogger(__name__)
@@ -185,18 +185,25 @@ async def cmd_compare(message: Message, db: Database, settings: Settings, is_adm
 
     result = StyleComparator.compare(candidate_text, baseline)
 
+    sim = result["similarity_score"]
+    bar = make_progress_bar(int(sim), 100, length=10)
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
     target_label = "вашим стилем" if target_user_id == caller_id else f"стилем ID {target_user_id}"
+    stats = result["candidate_stats"]
+    dot_str = "Да" if stats["has_trailing_dot"] else "Нет"
+
     lines = [
-        f"🔍 <b>Результат сравнения с {target_label}:</b>",
-        f"• Соответствие стилю: <b>{result['similarity_score']}%</b>\n",
-        "<b>Наблюдения и отличия:</b>",
+        f"🔍 <b>Сравнение текста с {target_label}:</b>\n{div}",
+        f"📊 <b>Соответствие стилю:</b> <code>[{bar}] {sim:.1f}%</code>\n{div}",
+        "💡 <b>Особенности и отличия:</b>",
     ]
     for obs in result["observations"]:
         lines.append(f"• {obs}")
 
-    lines.append("\n<i>Параметры оцениваемого фрагмента:</i>")
-    stats = result["candidate_stats"]
-    lines.append(f"Слов: {stats['words']}, Слов/предл: {stats['avg_sentence_len']:.1f}, Точка в конце: {'Да' if stats['has_trailing_dot'] else 'Нет'}")
+    lines.extend([
+        div,
+        f"📏 <b>Параметры фрагмента:</b> <code>{stats['words']} слов</code> • <code>{stats['avg_sentence_len']:.1f} сл/предл</code> • Точка: <i>{dot_str}</i>",
+    ])
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 
@@ -222,5 +229,12 @@ async def cmd_mimic(message: Message, db: Database, settings: Settings, is_admin
         )
         return
 
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
+    who_label = "вашего стиля" if target_user_id == caller_id else f"пользователя ID {target_user_id}"
     guidelines = StyleComparator.generate_mimicry_prompt(baseline)
-    await message.answer(f"<pre>{guidelines}</pre>", parse_mode="HTML")
+    text = (
+        f"🎭 <b>Промпт имитации тональности ({who_label}):</b>\n{div}\n"
+        "<i>Скопируйте блок ниже в System Prompt нейросети:</i>\n\n"
+        f"<pre>{guidelines}</pre>"
+    )
+    await message.answer(text, parse_mode="HTML")

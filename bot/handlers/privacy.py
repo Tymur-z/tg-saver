@@ -21,22 +21,23 @@ async def cmd_privacy(event: Message | CallbackQuery, db: Database, settings: Se
         repo = ProfileRepository(conn)
         exclusions = await repo.list_exclusions()
 
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
     lines = [
-        "🔒 <b>Политика конфиденциальности и хранение данных</b>\n",
-        "• Тексты сообщений и медиафайлы <b>не сохраняются</b> в базу данных.",
-        f"• <b>Срок ротации логов пересылки:</b> <code>{settings.DATA_RETENTION_DAYS} дней</code>.",
-        "• <b>Анализ стиля:</b> выполняется локально в оперативной памяти с фиксацией исключительно агрегированных числовых дескрипторов.\n",
+        f"🔒 <b>Политика конфиденциальности и хранение данных</b>\n{div}",
+        "• 📝 Тексты сообщений и медиафайлы <b>не сохраняются</b> в базу данных.",
+        f"• ⏱️ <b>Срок ротации логов пересылки:</b> <code>{settings.DATA_RETENTION_DAYS} дней</code>.",
+        "• 📊 <b>Анализ стиля:</b> фиксация только числовых параметров без хранения текстов.\n{div}",
     ]
 
     if exclusions:
         lines.append("🚫 <b>Активные исключения (Opt-Out):</b>")
         for exc in exclusions:
             lines.append(f"• {exc['entity_type'].upper()}: <code>{exc['entity_id']}</code>")
-        lines.append("")
+        lines.append(div)
     else:
-        lines.append("🚫 Исключения пока не настроены.\n")
+        lines.append("🚫 <b>Исключения:</b> пока не настроены.\n" + div)
 
-    lines.append("Используйте команды:\n"
+    lines.append("👇 <b>Команды управления:</b>\n"
                  "• <code>/exclude_user &lt;id&gt;</code> — исключить пользователя\n"
                  "• <code>/exclude_chat &lt;id&gt;</code> — исключить чат\n"
                  "• <code>/delete_data</code> — безвозвратно удалить свой профиль")

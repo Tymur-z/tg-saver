@@ -45,14 +45,18 @@ class AdminPasswordStates(StatesGroup):
 async def cmd_start(message: Message, is_admin: bool = False) -> None:
     role_badge = "👑 <b>Администратор</b>" if is_admin else "👤 <b>Пользователь</b>"
     user_name = message.from_user.first_name if message.from_user else "пользователь"
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     text = (
-        f"👋 <b>Добро пожаловать, {user_name}!</b> [{role_badge}]\n\n"
-        "Ваш персональный кабинет управления пересылкой и аналитикой Telegram:\n"
-        "1. <b>Индивидуальные маршруты:</b> настройка собственных пайплайнов пересылки.\n"
-        "2. <b>Фильтрация контента:</b> выбор конкретных типов медиа, стоп-слов и очистка текста.\n"
-        "3. <b>Аналитика стиля:</b> изучение собственной письменной речи и генерация промптов тональности.\n\n"
-        "Используйте кнопки меню ниже для перехода:"
+        f"👋 <b>Добро пожаловать, {user_name}!</b> [{role_badge}]\n"
+        f"{div}\n"
+        "<b>Возможности системы:</b>\n"
+        "• 🔀 <b>Маршруты:</b> пересылка, фильтрация медиа и очистка текста\n"
+        "• 🛡️ <b>Модерация:</b> защита чатов от мата и автопредупреждения\n"
+        "• 💬 <b>ИИ-Собеседник:</b> общение по тегу или ответу (Reply)\n"
+        "• 📊 <b>Стилометрия:</b> анализ стиля речи в подключенных группах\n"
+        f"{div}\n"
+        "👇 <i>Используйте кнопки меню ниже для навигации:</i>"
     )
     await message.answer(text, reply_markup=main_menu_kb(is_admin=is_admin), parse_mode="HTML")
 
@@ -111,14 +115,15 @@ async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings
         pw_req = await user_repo.is_password_required(settings.PASSWORD_REQUIRED)
 
     pw_status = "🟢 Включен" if pw_req else "⚪ Отключен"
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     text = (
-        "👑 <b>Панель Супер-Администратора</b>\n\n"
-        f"• Пользователей в системе: <code>{users_cnt}</code>\n"
-        f"• Всего маршрутов (все авторы): <code>{routes_cnt}</code>\n"
-        f"• Подключенных чатов и каналов: <code>{chats_cnt}</code>\n"
-        f"• Пароль доступа: {pw_status}\n\n"
-        "Выберите нужный раздел для управления:"
+        f"👑 <b>Панель Супер-Администратора</b>\n{div}\n"
+        f"• 👥 <b>Пользователей в системе:</b> <code>{users_cnt}</code>\n"
+        f"• 🔀 <b>Всего маршрутов:</b> <code>{routes_cnt}</code> <i>(все авторы)</i>\n"
+        f"• 📡 <b>Подключенных чатов:</b> <code>{chats_cnt}</code>\n"
+        f"• 🔑 <b>Пароль доступа:</b> {pw_status}\n{div}\n"
+        "👇 <i>Выберите нужный раздел для управления:</i>"
     )
 
     if isinstance(event, Message):
@@ -395,18 +400,19 @@ async def cmd_status(event: Message | CallbackQuery, db: Database, queue: Forwar
 
     status_str = "⏸️ <b>ПРИОСТАНОВЛЕНО</b>" if is_paused else "🟢 <b>АКТИВНО РАБОТАЕТ</b>"
     queue_len = queue.queue.qsize()
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     text = (
-        f"⚙️ <b>Статус системы</b>\n\n"
-        f"• Режим работы: {status_str}\n"
-        f"• Пользователей: <code>{users_cnt}</code>\n"
-        f"• Активных маршрутов: <code>{active_routes_cnt}</code> (всего: <code>{len(routes)}</code>)\n"
-        f"• Сообщений в очереди отправки: <code>{queue_len}</code>\n\n"
-        f"📈 <b>Статистика пересылки (Forward Logs):</b>\n"
-        f"• Успешно отправлено: <code>{stats.get('SENT', 0)}</code>\n"
-        f"• Отфильтровано: <code>{stats.get('FILTERED', 0)}</code>\n"
-        f"• Ошибок отправки: <code>{stats.get('FAILED', 0)}</code>\n"
-        f"• Всего зарегистрировано: <code>{stats.get('TOTAL', 0)}</code>"
+        f"⚙️ <b>Состояние системы</b>\n{div}\n"
+        f"• ⚡ <b>Режим работы:</b> {status_str}\n"
+        f"• 👥 <b>Пользователей:</b> <code>{users_cnt}</code>\n"
+        f"• 🔀 <b>Маршрутов:</b> <code>{active_routes_cnt}</code> активных <i>(всего: {len(routes)})</i>\n"
+        f"• 📬 <b>Очередь сообщений:</b> <code>{queue_len}</code> в ожидании\n{div}\n"
+        "📈 <b>Статистика пересылки (Forward Logs):</b>\n"
+        f"• ✅ Успешно доставлено: <code>{stats.get('SENT', 0)}</code>\n"
+        f"• 🔍 Отфильтровано: <code>{stats.get('FILTERED', 0)}</code>\n"
+        f"• ❌ Ошибок отправки: <code>{stats.get('FAILED', 0)}</code>\n"
+        f"• 📊 Всего обработано: <code>{stats.get('TOTAL', 0)}</code>"
     )
 
     kb = admin_panel_kb() if is_admin else main_menu_kb(is_admin=False)
@@ -501,15 +507,18 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
     w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
     d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
     ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     lines = [
-        f"🛡️ <b>Настройки модерации:</b> {title}",
-        f"🆔 ID чата: <code>{chat_id}</code> (тип: <i>{c_type}</i>)\n",
-        f"• <b>Фильтр ненормативной лексики:</b> {f_on}",
-        f"• <b>Предупреждать нарушителя:</b> {w_on}",
-        f"• <b>Удалять сообщения с матом:</b> {d_on}",
-        f"• <b>Общение с ИИ (тег/ответ):</b> {ai_on}\n",
-        "<i>Нажмите на кнопку ниже, чтобы переключить соответствующий параметр:</i>",
+        f"🛡️ <b>Настройки чата:</b> {title}",
+        f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
+        "🛡️ <b>Модерация ненормативной лексики:</b>",
+        f"• Фильтр матов: {f_on}",
+        f"• Предупреждать нарушителя: {w_on}",
+        f"• Удалять сообщения с матом: {d_on}\n{div}",
+        "💬 <b>Режим ИИ-собеседника:</b>",
+        f"• Ответ на теги и Reply: {ai_on}\n{div}",
+        "👇 <i>Нажмите на кнопку ниже для переключения:</i>",
     ]
     text = "\n".join(lines)
     await callback.message.edit_text(text, reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
@@ -541,15 +550,18 @@ async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_ad
     w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
     d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
     ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     lines = [
-        f"🛡️ <b>Настройки модерации:</b> {title}",
-        f"🆔 ID чата: <code>{chat_id}</code> (тип: <i>{c_type}</i>)\n",
-        f"• <b>Фильтр ненормативной лексики:</b> {f_on}",
-        f"• <b>Предупреждать нарушителя:</b> {w_on}",
-        f"• <b>Удалять сообщения с матом:</b> {d_on}",
-        f"• <b>Общение с ИИ (тег/ответ):</b> {ai_on}\n",
-        "<i>Нажмите на кнопку ниже, чтобы переключить соответствующий параметр:</i>",
+        f"🛡️ <b>Настройки чата:</b> {title}",
+        f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
+        "🛡️ <b>Модерация ненормативной лексики:</b>",
+        f"• Фильтр матов: {f_on}",
+        f"• Предупреждать нарушителя: {w_on}",
+        f"• Удалять сообщения с матом: {d_on}\n{div}",
+        "💬 <b>Режим ИИ-собеседника:</b>",
+        f"• Ответ на теги и Reply: {ai_on}\n{div}",
+        "👇 <i>Нажмите на кнопку ниже для переключения:</i>",
     ]
     text = "\n".join(lines)
     await callback.message.edit_text(text, reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
@@ -580,14 +592,15 @@ async def _render_llm_settings(conn, settings: Settings) -> tuple[str, bool]:
         key_masked = "❌ <i>Не установлен</i>"
 
     status_str = "🟢 <b>АКТИВЕН</b>" if is_on else "⚪ <b>ОТКЛЮЧЕН</b>"
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     lines = [
-        "🤖 <b>Панель управления ИИ и нейросетями (LLM)</b>\n",
-        f"• <b>Статус ИИ:</b> {status_str}",
-        f"• <b>Модель:</b> <code>{conf['llm_model']}</code>",
-        f"• <b>Эндпоинт (URL / IP):</b> <code>{conf['llm_base_url']}</code>",
-        f"• <b>API-ключ:</b> {key_masked}\n",
-        "<i>Вы можете изменять API-ключ, модель или IP-адрес сервера прямо через Telegram без перезапуска бота:</i>",
+        f"🤖 <b>Панель управления ИИ (LLM)</b>\n{div}",
+        f"• ⚡ <b>Статус ИИ:</b> {status_str}",
+        f"• 🧠 <b>Модель:</b> <code>{conf['llm_model']}</code>",
+        f"• 🌐 <b>Эндпоинт (URL/IP):</b> <code>{conf['llm_base_url']}</code>",
+        f"• 🔑 <b>API-ключ:</b> {key_masked}\n{div}",
+        "💡 <i>Поддерживаются OpenAI, Google Gemini, DeepSeek и локальные LLM (vLLM / Ollama).</i>",
     ]
     return "\n".join(lines), is_on
 

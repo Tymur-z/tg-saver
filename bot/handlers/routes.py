@@ -45,43 +45,41 @@ def render_route_card(route: Dict[str, Any]) -> str:
     is_active = bool(route.get("is_active"))
     mode = route.get("mode", "forward")
 
-    status_str = "🟢 <b>Активен (пересылает)</b>" if is_active else "⏸️ <b>Приостановлен</b>"
-    mode_str = "↗️ <b>Forward</b> (со ссылкой на автора)" if mode == "forward" else "📋 <b>Copy</b> (чистая копия без авторства)"
+    status_str = "🟢 <b>АКТИВЕН</b>" if is_active else "⏸️ <b>НА ПАУЗЕ</b>"
+    mode_str = "↗️ Forward (с автором)" if mode == "forward" else "📋 Copy (чистая копия)"
 
     source_title = route.get("source_title") or f"Чат {route['source_chat_id']}"
     dest_title = route.get("dest_title") or f"Чат {route['destination_chat_id']}"
 
     selected_types: List[str] = route.get("filter_media_types", [])
     if not selected_types:
-        media_summary = "✅ <i>Пересылаются ВСЕ типы контента (без ограничений)</i>"
+        media_summary = "<i>Все типы контента (без ограничений)</i>"
     else:
-        media_lines = []
-        for mtype, label in MEDIA_TYPE_LABELS.items():
-            icon = "✅" if mtype in selected_types else "❌"
-            media_lines.append(f"{icon} {label}")
-        media_summary = " | ".join(media_lines[:5]) + "\n• " + " | ".join(media_lines[5:])
+        media_lines = [MEDIA_TYPE_LABELS.get(m, m) for m in selected_types]
+        media_summary = ", ".join(media_lines)
 
     kws = route.get("filter_keywords", [])
-    kws_str = ", ".join(f"<code>{w}</code>" for w in kws) if kws else "<i>(любые сообщения)</i>"
+    kws_str = ", ".join(f"<code>{w}</code>" for w in kws) if kws else "<i>(любые)</i>"
 
     ex_kws = route.get("filter_exclude_keywords", [])
-    ex_str = ", ".join(f"<code>{w}</code>" for w in ex_kws) if ex_kws else "<i>(нет стоп-слов)</i>"
+    ex_str = ", ".join(f"<code>{w}</code>" for w in ex_kws) if ex_kws else "<i>(нет)</i>"
 
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
     lines = [
-        f"🔀 <b>Маршрут #{route_id}: {name}</b>\n",
-        f"• Статус: {status_str}",
-        f"• Режим: {mode_str}\n",
-        f"📡 <b>Источник:</b> {source_title} [<code>{route['source_chat_id']}</code>]",
-        f"🎯 <b>Назначение:</b> {dest_title} [<code>{route['destination_chat_id']}</code>]",
+        f"🔀 <b>Маршрут #{route_id}:</b> {name}",
+        div,
+        f"⚡ <b>Статус:</b> {status_str}  •  <b>Режим:</b> <code>{mode.upper()}</code>",
+        f"• Тип доставки: <i>{mode_str}</i>",
+        div,
+        f"📡 <b>Источник:</b> {source_title}",
+        f"<code>ID: {route['source_chat_id']}</code>\n",
+        f"🎯 <b>Назначение:</b> {dest_title}",
+        f"<code>ID: {route['destination_chat_id']}</code>",
+        div,
+        f"📦 <b>Разрешённые медиа:</b> {media_summary}",
+        f"🔍 <b>Ключевые слова:</b> {kws_str}",
+        f"🚫 <b>Стоп-слова:</b> {ex_str}",
     ]
-
-
-    lines.extend([
-        f"\n📦 <b>Фильтр типов контента:</b>\n• {media_summary}\n",
-        f"🔍 <b>Фильтр по словам:</b>",
-        f"• Обязательные слова: {kws_str}",
-        f"• Стоп-слова (пропускать): {ex_str}\n",
-    ])
 
     if mode == "copy":
         clean_links = "🟢 Вкл" if route.get("clean_links") else "⚪ Выкл"
@@ -90,14 +88,16 @@ def render_route_card(route: Dict[str, Any]) -> str:
         source_link = "🟢 Вкл" if route.get("append_source_link") else "⚪ Выкл"
 
         lines.extend([
-            "🛠️ <b>Опции форматирования (режим Copy):</b>",
-            f"• Удалять ссылки (http/https): {clean_links}",
-            f"• Удалять хештеги (#тег): {clean_tags}",
-            f"• Удалять @упоминания: {clean_mentions}",
-            f"• Добавлять подпись источника: {source_link}\n",
+            div,
+            "🧹 <b>Очистка текста (Copy):</b>",
+            f"• Ссылки: {clean_links}  •  Хештеги: {clean_tags}",
+            f"• @Упоминания: {clean_mentions}  •  Источник: {source_link}",
         ])
 
-    lines.append("<i>Нажмите кнопки ниже, чтобы изменить любую настройку в 1 клик:</i>")
+    lines.extend([
+        div,
+        "👇 <i>Используйте кнопки ниже для управления настройками:</i>",
+    ])
     return "\n".join(lines)
 
 
@@ -672,4 +672,4 @@ async def state_route_mode(callback: CallbackQuery, state: FSMContext, db: Datab
 async def cb_route_cancel(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
     await state.clear()
     await callback.message.edit_text("Создание маршрута отменено.", reply_markup=main_menu_kb(is_admin=is_admin))
-    await callback.answer()
+    await callback.answer()
