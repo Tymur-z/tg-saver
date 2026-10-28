@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS chats (
     is_source BOOLEAN NOT NULL DEFAULT 0,
     is_destination BOOLEAN NOT NULL DEFAULT 0,
     registered_by_user_id INTEGER NOT NULL DEFAULT 0,
+    profanity_filter_enabled BOOLEAN NOT NULL DEFAULT 0,
+    profanity_warn_enabled BOOLEAN NOT NULL DEFAULT 0,
+    profanity_delete_enabled BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -122,10 +125,16 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         except Exception:
             pass
 
-    try:
-        await conn.execute("ALTER TABLE chats ADD COLUMN registered_by_user_id INTEGER NOT NULL DEFAULT 0")
-    except Exception:
-        pass
+    for col, col_type, default in [
+        ("registered_by_user_id", "INTEGER", "0"),
+        ("profanity_filter_enabled", "BOOLEAN", "0"),
+        ("profanity_warn_enabled", "BOOLEAN", "0"),
+        ("profanity_delete_enabled", "BOOLEAN", "0"),
+    ]:
+        try:
+            await conn.execute(f"ALTER TABLE chats ADD COLUMN {col} {col_type} NOT NULL DEFAULT {default}")
+        except Exception:
+            pass
 
     try:
         await conn.execute("INSERT OR IGNORE INTO app_state (key, value) VALUES ('access_password', 'changeme')")

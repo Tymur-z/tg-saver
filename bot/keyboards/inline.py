@@ -49,12 +49,14 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="📡 Все чаты бота", callback_data="admin_all_chats"),
+                InlineKeyboardButton(text="🛡️ Модерация и маты", callback_data="admin_moderation_chats"),
             ],
             [
+                InlineKeyboardButton(text="🤖 Настройки ИИ (LLM)", callback_data="admin_llm_settings"),
                 InlineKeyboardButton(text="🔑 Пароль доступа", callback_data="admin_password"),
-                InlineKeyboardButton(text="⚙️ Статус и пауза", callback_data="nav_status"),
             ],
             [
+                InlineKeyboardButton(text="⚙️ Статус и пауза", callback_data="nav_status"),
                 InlineKeyboardButton(text="⬅️ В главное меню", callback_data="nav_main"),
             ],
         ]
@@ -177,7 +179,6 @@ def route_detail_kb(route: Dict[str, Any], is_admin: bool = False) -> InlineKeyb
         ],
     ]
 
-
     if mode == "copy":
         clean_links_icon = "🟢" if route.get("clean_links") else "⚪"
         clean_tags_icon = "🟢" if route.get("clean_tags") else "⚪"
@@ -292,3 +293,119 @@ def privacy_menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="nav_main")],
         ]
     )
+
+
+def moderation_chats_list_kb(chats: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = []
+    for c in chats:
+        title = c.get("title") or f"Chat {c['chat_id']}"
+        filter_on = bool(c.get("profanity_filter_enabled", 0))
+        warn_on = bool(c.get("profanity_warn_enabled", 0))
+        del_on = bool(c.get("profanity_delete_enabled", 0))
+
+        status_icons = []
+        if filter_on:
+            status_icons.append("🟢")
+        else:
+            status_icons.append("⚪")
+        if warn_on:
+            status_icons.append("⚠️")
+        if del_on:
+            status_icons.append("🗑️")
+
+        badges = "".join(status_icons)
+        btn_text = f"[{badges}] {title[:25]}"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"mod_chat_view:{c['chat_id']}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_moderation_chats"),
+        InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
+    cid = chat["chat_id"]
+    filter_on = bool(chat.get("profanity_filter_enabled", 0))
+    warn_on = bool(chat.get("profanity_warn_enabled", 0))
+    del_on = bool(chat.get("profanity_delete_enabled", 0))
+
+    btn_filter = f"{'🟢' if filter_on else '⚪'} Фильтр матов: {'ВКЛ' if filter_on else 'ВЫКЛ'}"
+    btn_warn = f"{'⚠️' if warn_on else '⚪'} Предупреждать нарушителя: {'ВКЛ' if warn_on else 'ВЫКЛ'}"
+    btn_del = f"{'🗑️' if del_on else '⚪'} Удалять сообщение: {'ВКЛ' if del_on else 'ВЫКЛ'}"
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=btn_filter, callback_data=f"mod_toggle:{cid}:profanity_filter_enabled")],
+            [InlineKeyboardButton(text=btn_warn, callback_data=f"mod_toggle:{cid}:profanity_warn_enabled")],
+            [InlineKeyboardButton(text=btn_del, callback_data=f"mod_toggle:{cid}:profanity_delete_enabled")],
+            [InlineKeyboardButton(text="⬅️ К списку чатов", callback_data="admin_moderation_chats")],
+        ]
+    )
+
+
+def llm_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
+    toggle_text = "🟢 ИИ: ВКЛЮЧЕН (нажмите для откл.)" if is_enabled else "⚪ ИИ: ОТКЛЮЧЕН (нажмите для вкл.)"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=toggle_text, callback_data="llm_toggle_enabled")],
+            [
+                InlineKeyboardButton(text="🔑 Задать API-ключ", callback_data="llm_set_key"),
+                InlineKeyboardButton(text="🧠 Выбрать модель", callback_data="llm_select_model"),
+            ],
+            [
+                InlineKeyboardButton(text="🌐 Задать Base URL / IP", callback_data="llm_select_url"),
+                InlineKeyboardButton(text="🧪 Проверить связь", callback_data="llm_test_ping"),
+            ],
+            [InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin")],
+        ]
+    )
+
+
+def llm_models_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚡ gpt-4o-mini (OpenAI)", callback_data="llm_preset_model:gpt-4o-mini"),
+                InlineKeyboardButton(text="⚡ gemini-1.5-flash (Google)", callback_data="llm_preset_model:gemini-1.5-flash"),
+            ],
+            [
+                InlineKeyboardButton(text="🧠 gpt-4o (OpenAI)", callback_data="llm_preset_model:gpt-4o"),
+                InlineKeyboardButton(text="💎 gemini-1.5-pro (Google)", callback_data="llm_preset_model:gemini-1.5-pro"),
+            ],
+            [
+                InlineKeyboardButton(text="🚀 deepseek-chat", callback_data="llm_preset_model:deepseek-chat"),
+                InlineKeyboardButton(text="✏️ Ввести вручную", callback_data="llm_custom_model"),
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад к ИИ", callback_data="admin_llm_settings")],
+        ]
+    )
+
+
+def llm_base_urls_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🌐 OpenAI Official", callback_data="llm_preset_url:https://api.openai.com/v1"),
+            ],
+            [
+                InlineKeyboardButton(text="🌐 Google Gemini (OpenAI API)", callback_data="llm_preset_url:https://generativelanguage.googleapis.com/v1beta/openai/"),
+            ],
+            [
+                InlineKeyboardButton(text="🌐 DeepSeek API", callback_data="llm_preset_url:https://api.deepseek.com/v1"),
+            ],
+            [
+                InlineKeyboardButton(text="✏️ Ввести свой URL / IP адрес", callback_data="llm_custom_url"),
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад к ИИ", callback_data="admin_llm_settings")],
+        ]
+    )
+
+
+def llm_cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_llm_settings")],
+        ]
+    )
+

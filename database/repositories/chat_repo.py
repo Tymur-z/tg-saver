@@ -132,6 +132,39 @@ class ChatRepository(BaseRepository):
         rows = await self.fetch_all("SELECT * FROM chats ORDER BY title ASC")
         return [dict(r) for r in rows]
 
+    async def list_moderation_chats(self) -> List[Dict[str, Any]]:
+        """Return all group, supergroup, and channel chats for moderation settings."""
+        rows = await self.fetch_all(
+            """
+            SELECT * FROM chats
+            WHERE chat_type IN ('group', 'supergroup', 'channel')
+            ORDER BY title ASC
+            """
+        )
+        return [dict(r) for r in rows]
+
+    async def toggle_setting(self, chat_id: int, field_name: str) -> bool:
+        """Toggle a boolean moderation setting for a specific chat."""
+        allowed_fields = {
+            "profanity_filter_enabled",
+            "profanity_warn_enabled",
+            "profanity_delete_enabled",
+        }
+        if field_name not in allowed_fields:
+            raise ValueError(f"Invalid chat setting field: {field_name}")
+
+        chat = await self.get_chat(chat_id)
+        if not chat:
+            return False
+
+        current_val = bool(chat.get(field_name, 0))
+        new_val = 0 if current_val else 1
+        await self.execute(
+            f"UPDATE chats SET {field_name} = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
+            (new_val, chat_id),
+        )
+        return bool(new_val)
+
     async def set_role(self, chat_id: int, is_source: bool, is_destination: bool) -> None:
         await self.execute(
             """

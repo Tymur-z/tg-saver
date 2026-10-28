@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from aiogram import Bot, Dispatcher
+from typing import Optional
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -9,10 +10,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config.settings import Settings
 from database.connection import Database
 from database.repositories.user_repo import UserRepository
+from database.repositories.config_repo import ConfigRepository
 from database.schema import init_db
 from forwarder.engine import ForwardEngine
 from forwarder.queue import ForwardQueue
 from analytics.profiler import StyleProfiler
+from moderation.llm_client import LLMClient
+from moderation.profanity import ProfanityDetector
 from bot.middlewares.auth import UserAuthMiddleware
 from bot.middlewares.album import MediaGroupMiddleware
 from bot.handlers import (
@@ -39,6 +43,8 @@ def create_dispatcher(
     queue: ForwardQueue,
     forward_engine: ForwardEngine,
     style_profiler: StyleProfiler,
+    profanity_detector: Optional[ProfanityDetector] = None,
+    llm_client: Optional[LLMClient] = None,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
 
@@ -47,6 +53,10 @@ def create_dispatcher(
     dp["queue"] = queue
     dp["forward_engine"] = forward_engine
     dp["style_profiler"] = style_profiler
+    if profanity_detector:
+        dp["profanity_detector"] = profanity_detector
+    if llm_client:
+        dp["llm_client"] = llm_client
 
     auth_middleware = UserAuthMiddleware(db=db, settings=settings)
     dp.message.outer_middleware(auth_middleware)
@@ -55,6 +65,12 @@ def create_dispatcher(
     album_middleware = MediaGroupMiddleware(debounce_seconds=settings.ALBUM_DEBOUNCE_SECONDS)
     forward_router.message.middleware(album_middleware)
     forward_router.channel_post.middleware(album_middleware)
+
+    # Ensure management routers only process events from private chats.
+    # In groups/supergroups the bot must stay completely silent and never respond to commands.
+    for r in (admin_router, routes_router, analytics_router, privacy_router):
+        r.message.filter(F.chat.type == "private")
+        r.callback_query.filter(F.message.chat.type == "private")
 
     dp.include_router(admin_router)
     dp.include_router(routes_router)
@@ -79,6 +95,15 @@ async def start_application(settings: Settings) -> None:
         if not await row.fetchone():
             await user_repo.set_password_required(settings.PASSWORD_REQUIRED)
 
+        # Dynamic LLM configuration from database
+        config_repo = ConfigRepository(conn)
+        llm_conf = await config_repo.get_llm_config(
+            default_enabled=settings.LLM_ENABLED,
+            default_api_key=settings.LLM_API_KEY,
+            default_base_url=settings.LLM_BASE_URL,
+            default_model=settings.LLM_MODEL,
+        )
+
     bot = create_bot(settings)
     queue = ForwardQueue(
         bot=bot,
@@ -90,7 +115,25 @@ async def start_application(settings: Settings) -> None:
     forward_engine = ForwardEngine(bot=bot, db=db, queue=queue)
     style_profiler = StyleProfiler(db=db)
 
-    dp = create_dispatcher(settings, db, queue, forward_engine, style_profiler)
+    llm_client = LLMClient(
+        api_key=llm_conf["llm_api_key"],
+        base_url=llm_conf["llm_base_url"],
+        model=llm_conf["llm_model"],
+    )
+    profanity_detector = ProfanityDetector(
+        llm_client=llm_client,
+        llm_enabled=llm_conf["llm_enabled"],
+    )
+
+    dp = create_dispatcher(
+        settings=settings,
+        db=db,
+        queue=queue,
+        forward_engine=forward_engine,
+        style_profiler=style_profiler,
+        profanity_detector=profanity_detector,
+        llm_client=llm_client,
+    )
 
     queue.start()
     logger.info("Starting Telegram Bot long-polling...")

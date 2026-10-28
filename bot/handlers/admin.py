@@ -15,10 +15,19 @@ from database.repositories.profile_repo import ProfileRepository
 from database.repositories.route_repo import RouteRepository
 from database.repositories.user_repo import UserRepository
 from forwarder.queue import ForwardQueue
+from database.repositories.config_repo import ConfigRepository
+from moderation.llm_client import LLMClient
+from moderation.profanity import ProfanityDetector
 from bot.keyboards.inline import (
     admin_panel_kb,
     all_routes_kb,
+    chat_moderation_detail_kb,
+    llm_base_urls_select_kb,
+    llm_cancel_kb,
+    llm_models_select_kb,
+    llm_settings_kb,
     main_menu_kb,
+    moderation_chats_list_kb,
     password_management_kb,
     user_card_kb,
     users_list_kb,
@@ -71,6 +80,8 @@ async def cmd_help(message: Message, is_admin: bool = False) -> None:
             "• /admin — главная панель управления",
             "• /users — управление пользователями и аккаунтами",
             "• /password — настройка и смена пароля доступа",
+            "• /moderation — модерация матов и предупреждения нарушителей",
+            "• /llm — настройка ИИ (модель, API-ключ, URL/IP)",
             "• /all_routes — просмотр всех маршрутов всех пользователей",
             "• /all_chats — просмотр всех каналов и групп бота",
             "• /status — статус очередей, пауза и статистика",
@@ -435,3 +446,439 @@ async def cb_main_menu(callback: CallbackQuery, is_admin: bool = False) -> None:
         reply_markup=main_menu_kb(is_admin=is_admin),
     )
     await callback.answer()
+
+@router.message(Command("moderation"))
+async def cmd_admin_moderation_chats(event: Message | CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        if isinstance(event, CallbackQuery):
+            await event.answer("⚠️ Доступ разрешен только администраторам.", show_alert=True)
+        return
+
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        chats = await chat_repo.list_moderation_chats()
+
+    lines = [
+        "🛡️ <b>Модерация ненормативной лексики (ИИ и фильтры)</b>\n",
+        "Выберите группу или супергруппу для настройки параметров модерации:",
+        "• 🟢 — фильтр матов включен (гибридный анализ: регулярные шаблоны + нейросеть)",
+        "• ⚠️ — отправка предупреждений нарушителям в чате",
+        "• 🗑️ — автоматическое удаление нецензурных сообщений\n",
+        f"Всего групп и каналов в системе: <b>{len(chats)}</b>",
+    ]
+    text = "\n".join(lines)
+    kb = moderation_chats_list_kb(chats)
+    if isinstance(event, CallbackQuery):
+        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await event.answer()
+    else:
+        await event.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_moderation_chats")
+async def cb_admin_moderation_chats(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    await cmd_admin_moderation_chats(callback, db=db, is_admin=is_admin)
+
+
+@router.callback_query(F.data.startswith("mod_chat_view:"))
+async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    chat_id = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        chat = await chat_repo.get_chat(chat_id)
+
+    if not chat:
+        await callback.answer("❌ Чат не найден в базе.", show_alert=True)
+        return
+
+    title = chat.get("title") or f"ID {chat_id}"
+    c_type = chat.get("chat_type", "group")
+    f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
+    w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
+    d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
+
+    lines = [
+        f"🛡️ <b>Настройки модерации:</b> {title}",
+        f"🆔 ID чата: <code>{chat_id}</code> (тип: <i>{c_type}</i>)\n",
+        f"• <b>Фильтр ненормативной лексики:</b> {f_on}",
+        f"• <b>Предупреждать нарушителя:</b> {w_on}",
+        f"• <b>Удалять сообщения с матом:</b> {d_on}\n",
+        "<i>Нажмите на кнопку ниже, чтобы переключить соответствующий параметр:</i>",
+    ]
+    text = "\n".join(lines)
+    await callback.message.edit_text(text, reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mod_toggle:"))
+async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    chat_id = int(parts[1])
+    field_name = parts[2]
+
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        await chat_repo.toggle_setting(chat_id, field_name)
+        chat = await chat_repo.get_chat(chat_id)
+
+    if not chat:
+        await callback.answer("❌ Ошибка обновления.", show_alert=True)
+        return
+
+    title = chat.get("title") or f"ID {chat_id}"
+    c_type = chat.get("chat_type", "group")
+    f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
+    w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
+    d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
+
+    lines = [
+        f"🛡️ <b>Настройки модерации:</b> {title}",
+        f"🆔 ID чата: <code>{chat_id}</code> (тип: <i>{c_type}</i>)\n",
+        f"• <b>Фильтр ненормативной лексики:</b> {f_on}",
+        f"• <b>Предупреждать нарушителя:</b> {w_on}",
+        f"• <b>Удалять сообщения с матом:</b> {d_on}\n",
+        "<i>Нажмите на кнопку ниже, чтобы переключить соответствующий параметр:</i>",
+    ]
+    text = "\n".join(lines)
+    await callback.message.edit_text(text, reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
+    await callback.answer("✅ Настройка обновлена")
+
+
+class AdminLLMStates(StatesGroup):
+    waiting_for_api_key = State()
+    waiting_for_model = State()
+    waiting_for_base_url = State()
+
+
+async def _render_llm_settings(conn, settings: Settings) -> tuple[str, bool]:
+    config_repo = ConfigRepository(conn)
+    conf = await config_repo.get_llm_config(
+        default_enabled=settings.LLM_ENABLED,
+        default_api_key=settings.LLM_API_KEY,
+        default_base_url=settings.LLM_BASE_URL,
+        default_model=settings.LLM_MODEL,
+    )
+    is_on = conf["llm_enabled"]
+    raw_key = conf["llm_api_key"]
+    if len(raw_key) > 10:
+        key_masked = f"<code>{raw_key[:5]}...{raw_key[-4:]}</code>"
+    elif raw_key:
+        key_masked = "<i>(установлен)</i>"
+    else:
+        key_masked = "❌ <i>Не установлен</i>"
+
+    status_str = "🟢 <b>АКТИВЕН</b>" if is_on else "⚪ <b>ОТКЛЮЧЕН</b>"
+
+    lines = [
+        "🤖 <b>Панель управления ИИ и нейросетями (LLM)</b>\n",
+        f"• <b>Статус ИИ:</b> {status_str}",
+        f"• <b>Модель:</b> <code>{conf['llm_model']}</code>",
+        f"• <b>Эндпоинт (URL / IP):</b> <code>{conf['llm_base_url']}</code>",
+        f"• <b>API-ключ:</b> {key_masked}\n",
+        "<i>Вы можете изменять API-ключ, модель или IP-адрес сервера прямо через Telegram без перезапуска бота:</i>",
+    ]
+    return "\n".join(lines), is_on
+
+
+@router.message(Command("llm"))
+@router.callback_query(F.data == "admin_llm_settings")
+async def cmd_admin_llm_settings(
+    event: Message | CallbackQuery,
+    db: Database,
+    settings: Settings,
+    is_admin: bool = False,
+    state: Optional[FSMContext] = None,
+) -> None:
+    if not is_admin:
+        if isinstance(event, CallbackQuery):
+            await event.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    if state:
+        await state.clear()
+
+    async with db.connect() as conn:
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    kb = llm_settings_kb(is_on)
+    if isinstance(event, CallbackQuery):
+        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await event.answer()
+    else:
+        await event.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "llm_toggle_enabled")
+async def cb_llm_toggle_enabled(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    profanity_detector: ProfanityDetector,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        curr = await config_repo.get_llm_config(default_enabled=settings.LLM_ENABLED)
+        new_val = not curr["llm_enabled"]
+        await config_repo.set_llm_config(enabled=new_val)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    profanity_detector.set_llm_enabled(new_val)
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    state_desc = "включен" if new_val else "отключен"
+    await callback.answer(f"ИИ {state_desc}")
+
+
+@router.callback_query(F.data == "llm_set_key")
+async def cb_llm_set_key(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    await state.set_state(AdminLLMStates.waiting_for_api_key)
+    lines = [
+        "🔑 <b>Ввод нового API-ключа</b>\n",
+        "Отправьте ваш API-ключ сообщением в этот чат (например <code>sk-proj-...</code> для OpenAI или ключ Google AI Studio).",
+        "<i>В целях безопасности ваше сообщение с ключом будет сразу удалено после сохранения.</i>",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=llm_cancel_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(AdminLLMStates.waiting_for_api_key)
+async def proc_admin_llm_api_key(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    llm_client: LLMClient,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        return
+
+    new_key = message.text.strip() if message.text else ""
+    await state.clear()
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    if not new_key or len(new_key) < 5:
+        await message.answer("❌ Ключ слишком короткий или пустой. Попробуйте снова через /llm", reply_markup=admin_panel_kb())
+        return
+
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(api_key=new_key)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    llm_client.update_config(api_key=new_key)
+    await message.answer(f"✅ <b>API-ключ успешно обновлен и сохранён!</b>\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "llm_select_model")
+async def cb_llm_select_model(callback: CallbackQuery, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    lines = [
+        "🧠 <b>Выбор модели ИИ</b>\n",
+        "Выберите готовую модель из списка или введите точное название вручную:",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=llm_models_select_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("llm_preset_model:"))
+async def cb_llm_preset_model(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    llm_client: LLMClient,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    model_name = callback.data.split(":", 1)[1]
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(model=model_name)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    llm_client.update_config(model=model_name)
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.answer(f"Модель изменена на {model_name}")
+
+
+@router.callback_query(F.data == "llm_custom_model")
+async def cb_llm_custom_model(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    await state.set_state(AdminLLMStates.waiting_for_model)
+    lines = [
+        "✏️ <b>Ручной ввод названия модели</b>\n",
+        "Отправьте сообщением название модели (например, <code>gpt-4o</code>, <code>claude-3-haiku</code>, <code>llama3.1</code>):",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=llm_cancel_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(AdminLLMStates.waiting_for_model)
+async def proc_admin_llm_custom_model(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    llm_client: LLMClient,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        return
+
+    model_name = message.text.strip() if message.text else ""
+    await state.clear()
+
+    if not model_name:
+        await message.answer("❌ Название модели не может быть пустым.", reply_markup=admin_panel_kb())
+        return
+
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(model=model_name)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    llm_client.update_config(model=model_name)
+    await message.answer(f"✅ <b>Модель установлена:</b> <code>{model_name}</code>\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "llm_select_url")
+async def cb_llm_select_url(callback: CallbackQuery, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    lines = [
+        "🌐 <b>Выбор Base URL / IP адреса сервера</b>\n",
+        "Выберите стандартный эндпоинт или введите произвольный URL/IP:",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=llm_base_urls_select_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("llm_preset_url:"))
+async def cb_llm_preset_url(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    llm_client: LLMClient,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    url = callback.data.split(":", 1)[1]
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(base_url=url)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    llm_client.update_config(base_url=url)
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.answer("URL эндпоинта обновлен")
+
+
+@router.callback_query(F.data == "llm_custom_url")
+async def cb_llm_custom_url(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    await state.set_state(AdminLLMStates.waiting_for_base_url)
+    lines = [
+        "🌐 <b>Ввод произвольного Base URL / IP-адреса</b>\n",
+        "Отправьте полный адрес OpenAI-совместимого эндпоинта, например:",
+        "• <code>http://192.168.1.50:11434/v1</code> (локальная Ollama)",
+        "• <code>http://18.135.101.212:8000/v1</code> (свой сервер vLLM)",
+        "• <code>https://api.openai.com/v1</code>",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=llm_cancel_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(AdminLLMStates.waiting_for_base_url)
+async def proc_admin_llm_custom_url(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    llm_client: LLMClient,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        return
+
+    url = message.text.strip() if message.text else ""
+    await state.clear()
+
+    if not url.startswith("http://") and not url.startswith("https://"):
+        await message.answer("❌ Адрес должен начинаться с http:// или https://. Попробуйте снова через /llm", reply_markup=admin_panel_kb())
+        return
+
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(base_url=url)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    llm_client.update_config(base_url=url)
+    await message.answer(f"✅ <b>Эндпоинт сохранён:</b> <code>{url}</code>\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "llm_test_ping")
+async def cb_llm_test_ping(
+    callback: CallbackQuery,
+    llm_client: LLMClient,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    await callback.answer("⏳ Тестирование соединения с ИИ...", show_alert=False)
+    success, msg, latency_ms = await llm_client.test_connection()
+
+    if success:
+        result_text = (
+            f"✅ <b>Тест подключения успешен!</b>\n\n"
+            f"• <b>Модель:</b> <code>{llm_client.model}</code>\n"
+            f"• <b>Задержка:</b> <code>{latency_ms:.0f} мс</code>\n"
+            f"• <b>Ответ API:</b> <i>{msg}</i>"
+        )
+    else:
+        result_text = (
+            f"❌ <b>Ошибка при проверке связи!</b>\n\n"
+            f"• <b>Эндпоинт:</b> <code>{llm_client.base_url}</code>\n"
+            f"• <b>Модель:</b> <code>{llm_client.model}</code>\n"
+            f"• <b>Причина:</b> <i>{msg}</i>"
+        )
+
+    await callback.message.answer(result_text, parse_mode="HTML")

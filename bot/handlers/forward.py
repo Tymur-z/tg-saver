@@ -8,9 +8,12 @@ from aiogram import Router
 from aiogram.types import Message
 
 from config.settings import Settings
+from database.connection import Database
+from database.repositories.chat_repo import ChatRepository
 from forwarder.engine import ForwardEngine
 from forwarder.media_handler import MediaHandler
 from analytics.profiler import StyleProfiler
+from moderation.profanity import ProfanityDetector
 
 logger = logging.getLogger(__name__)
 router = Router(name="forward_router")
@@ -34,16 +37,70 @@ async def handle_incoming_message(
     forward_engine: ForwardEngine,
     style_profiler: StyleProfiler,
     settings: Settings,
+    db: Database,
+    profanity_detector: Optional[ProfanityDetector] = None,
     album_messages: Optional[List[Message]] = None,
 ) -> None:
-    if message.text and message.text.startswith("/"):
+    # Ignore commands
+    msg_text = message.text or message.caption
+    if msg_text and msg_text.startswith("/"):
         return
 
+    # 1. Profanity Moderation pipeline (for groups and supergroups)
+    if profanity_detector and message.chat.type in ("group", "supergroup"):
+        try:
+            async with db.connect() as conn:
+                chat_repo = ChatRepository(conn)
+                chat = await chat_repo.get_chat(message.chat.id)
+                if not chat:
+                    await chat_repo.ensure_chat_exists(
+                        chat_id=message.chat.id,
+                        title=message.chat.title or f"Chat {message.chat.id}",
+                        chat_type=message.chat.type,
+                        username=message.chat.username,
+                    )
+                    chat = await chat_repo.get_chat(message.chat.id)
+
+            if chat and chat.get("profanity_filter_enabled"):
+                text_to_check = MediaHandler.get_text_or_caption(message)
+                if text_to_check and text_to_check.strip():
+                    prof_result = await profanity_detector.check_text(text_to_check)
+                    if prof_result.is_profane:
+                        logger.info(
+                            "Profanity detected in chat %s from user %s. Method: %s, Reason: %s",
+                            message.chat.id,
+                            message.from_user.id if message.from_user else "unknown",
+                            prof_result.method,
+                            prof_result.reason,
+                        )
+                        # Option A: Delete profane message if configured
+                        if chat.get("profanity_delete_enabled"):
+                            try:
+                                await message.delete()
+                            except Exception as del_err:
+                                logger.warning("Could not delete profane message in %s: %s", message.chat.id, del_err)
+
+                        # Option B: Send warning in chat if configured
+                        if chat.get("profanity_warn_enabled"):
+                            user_mention = message.from_user.mention_html() if message.from_user else "Участник"
+                            warn_text = (
+                                f"⚠️ <b>Предупреждение о нарушении правил</b>\n\n"
+                                f"{user_mention}, пожалуйста, соблюдайте культуру общения и воздержитесь от ненормативной лексики."
+                            )
+                            try:
+                                await message.answer(warn_text)
+                            except Exception as warn_err:
+                                logger.warning("Could not send profanity warning in %s: %s", message.chat.id, warn_err)
+        except Exception as mod_err:
+            logger.exception("Error checking profanity for message %s: %s", message.message_id, mod_err)
+
+    # 2. Forwarding pipeline
     try:
         await forward_engine.process_incoming_message(message, album_messages=album_messages)
     except Exception as e:
         logger.exception("Error forwarding message %s: %s", message.message_id, e)
 
+    # 3. Stylometry Analytics pipeline (if enabled)
     if settings.ANALYTICS_ENABLED and message.from_user:
         text = MediaHandler.get_text_or_caption(message)
         if text.strip():
