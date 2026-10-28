@@ -1,5 +1,3 @@
-"""Repository for managing application dynamic runtime configuration stored in SQLite."""
-
 from __future__ import annotations
 
 import logging
@@ -10,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigRepository(BaseRepository):
-    """Manages key-value pairs stored in app_state table."""
 
     async def get_value(self, key: str, default: Optional[str] = None) -> Optional[str]:
         row = await self.fetch_one("SELECT value FROM app_state WHERE key = ?", (key,))
@@ -35,7 +32,6 @@ class ConfigRepository(BaseRepository):
         default_base_url: str = "https://api.openai.com/v1",
         default_model: str = "gpt-4o-mini",
     ) -> Dict[str, Any]:
-        """Fetch active LLM settings from app_state, falling back to passed defaults."""
         enabled_val = await self.get_value("llm_enabled", "1" if default_enabled else "0")
         api_key_val = await self.get_value("llm_api_key", default_api_key)
         base_url_val = await self.get_value("llm_base_url", default_base_url)
@@ -55,7 +51,6 @@ class ConfigRepository(BaseRepository):
         base_url: Optional[str] = None,
         model: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Update any subset of LLM settings in app_state."""
         if enabled is not None:
             await self.set_value("llm_enabled", "1" if enabled else "0")
         if api_key is not None:

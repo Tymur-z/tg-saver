@@ -46,8 +46,7 @@ async def handle_incoming_message(
     if msg_text and msg_text.startswith("/"):
         return
 
-    # 1. Profanity Moderation pipeline (for groups and supergroups)
-    if profanity_detector and message.chat.type in ("group", "supergroup"):
+    if message.chat.type in ("group", "supergroup") and profanity_detector:
         try:
             async with db.connect() as conn:
                 chat_repo = ChatRepository(conn)
@@ -67,20 +66,18 @@ async def handle_incoming_message(
                     prof_result = await profanity_detector.check_text(text_to_check)
                     if prof_result.is_profane:
                         logger.info(
-                            "Profanity detected in chat %s from user %s. Method: %s, Reason: %s",
+                            "Profanity detected in chat %s from user %s: %s (%s)",
                             message.chat.id,
                             message.from_user.id if message.from_user else "unknown",
-                            prof_result.method,
                             prof_result.reason,
+                            prof_result.method,
                         )
-                        # Option A: Delete profane message if configured
                         if chat.get("profanity_delete_enabled"):
                             try:
                                 await message.delete()
                             except Exception as del_err:
-                                logger.warning("Could not delete profane message in %s: %s", message.chat.id, del_err)
+                                logger.warning("Could not delete message in %s: %s", message.chat.id, del_err)
 
-                        # Option B: Send warning in chat if configured
                         if chat.get("profanity_warn_enabled"):
                             user_mention = message.from_user.mention_html() if message.from_user else "Участник"
                             warn_text = (
@@ -90,17 +87,15 @@ async def handle_incoming_message(
                             try:
                                 await message.answer(warn_text)
                             except Exception as warn_err:
-                                logger.warning("Could not send profanity warning in %s: %s", message.chat.id, warn_err)
+                                logger.warning("Could not send warning in %s: %s", message.chat.id, warn_err)
         except Exception as mod_err:
-            logger.exception("Error checking profanity for message %s: %s", message.message_id, mod_err)
+            logger.exception("Error during profanity check for message %s: %s", message.message_id, mod_err)
 
-    # 2. Forwarding pipeline
     try:
         await forward_engine.process_incoming_message(message, album_messages=album_messages)
     except Exception as e:
         logger.exception("Error forwarding message %s: %s", message.message_id, e)
 
-    # 3. Stylometry Analytics pipeline (if enabled)
     if settings.ANALYTICS_ENABLED and message.from_user:
         text = MediaHandler.get_text_or_caption(message)
         if text.strip():

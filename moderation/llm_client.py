@@ -1,4 +1,4 @@
-"""Async client for OpenAI-compatible LLM endpoints (OpenAI, Gemini, DeepSeek, Ollama, etc.)."""
+"""Клиент для OpenAI-совместимых API."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    """Universal asynchronous client for OpenAI-compatible Chat Completions API."""
 
     def __init__(
         self,
@@ -32,7 +31,6 @@ class LLMClient:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
     ) -> None:
-        """Dynamically update client credentials and endpoint at runtime."""
         if api_key is not None:
             self.api_key = api_key.strip()
         if base_url is not None:
@@ -41,7 +39,6 @@ class LLMClient:
             self.model = model.strip()
 
     async def test_connection(self) -> tuple[bool, str, float]:
-        """Test LLM connectivity and measure response latency in milliseconds."""
         if not self.api_key:
             return False, "API-ключ не установлен", 0.0
 
@@ -85,7 +82,6 @@ class LLMClient:
         max_tokens: int = 150,
         response_json: bool = False,
     ) -> Optional[str]:
-        """Send chat completion request to configured LLM endpoint."""
         if not self.api_key:
             logger.debug("LLMClient called without API key. Skipping.")
             return None

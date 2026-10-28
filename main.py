@@ -17,7 +17,7 @@ def main() -> None:
         sys.exit(1)
 
     setup_logging(settings)
-    logger.info("Starting Telegram Media Forwarder & Stylometry Analyzer...")
+    logger.info("Starting tg-saver bot...")
 
     try:
         asyncio.run(start_application(settings))

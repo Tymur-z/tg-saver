@@ -66,8 +66,6 @@ def create_dispatcher(
     forward_router.message.middleware(album_middleware)
     forward_router.channel_post.middleware(album_middleware)
 
-    # Ensure management routers only process events from private chats.
-    # In groups/supergroups the bot must stay completely silent and never respond to commands.
     for r in (admin_router, routes_router, analytics_router, privacy_router):
         r.message.filter(F.chat.type == "private")
         r.callback_query.filter(F.message.chat.type == "private")
@@ -95,7 +93,6 @@ async def start_application(settings: Settings) -> None:
         if not await row.fetchone():
             await user_repo.set_password_required(settings.PASSWORD_REQUIRED)
 
-        # Dynamic LLM configuration from database
         config_repo = ConfigRepository(conn)
         llm_conf = await config_repo.get_llm_config(
             default_enabled=settings.LLM_ENABLED,

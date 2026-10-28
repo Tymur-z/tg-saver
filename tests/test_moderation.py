@@ -15,7 +15,6 @@ from moderation.llm_client import LLMClient
 async def test_regex_profanity_detection() -> None:
     detector = ProfanityDetector(llm_enabled=False)
 
-    # Obvious Russian profanities
     profane_samples = [
         "Пошел нахуй отсюда",
         "Полный пиздец творится",
@@ -69,7 +68,6 @@ async def test_llm_profanity_fallback() -> None:
     mock_llm.chat_completion.return_value = '{"is_profane": true, "reason": "Скрытый мат", "confidence": 0.95}'
 
     detector = ProfanityDetector(llm_client=mock_llm, llm_enabled=True)
-    # A phrase disguised without standard regex triggers
     res = await detector.check_text("какая-то замаскированная токсичность")
 
     assert res.is_profane is True
@@ -83,26 +81,22 @@ async def test_chat_repo_moderation_settings(test_db: Database) -> None:
     async with test_db.connect() as conn:
         repo = ChatRepository(conn)
 
-        # 1. Add chats of different types
         await repo.upsert_chat(chat_id=-1001, title="Test Group", chat_type="supergroup")
         await repo.upsert_chat(chat_id=-1002, title="Test Channel", chat_type="channel")
         await repo.upsert_chat(chat_id=12345, title="Private Chat", chat_type="private")
 
-        # 2. list_moderation_chats should return only supergroup and channel
         mod_chats = await repo.list_moderation_chats()
         chat_ids = [c["chat_id"] for c in mod_chats]
         assert -1001 in chat_ids
         assert -1002 in chat_ids
         assert 12345 not in chat_ids
 
-        # 3. Default flags should be False (0)
         target = await repo.get_chat(-1001)
         assert target is not None
         assert target["profanity_filter_enabled"] == 0
         assert target["profanity_warn_enabled"] == 0
         assert target["profanity_delete_enabled"] == 0
 
-        # 4. Toggle settings
         new_val = await repo.toggle_setting(-1001, "profanity_filter_enabled")
         assert new_val is True
         target = await repo.get_chat(-1001)
@@ -113,13 +107,11 @@ async def test_chat_repo_moderation_settings(test_db: Database) -> None:
         target = await repo.get_chat(-1001)
         assert target["profanity_warn_enabled"] == 1
 
-        # Toggle back to False
         new_val = await repo.toggle_setting(-1001, "profanity_filter_enabled")
         assert new_val is False
         target = await repo.get_chat(-1001)
         assert target["profanity_filter_enabled"] == 0
 
-        # Invalid field rejection
         with pytest.raises(ValueError):
             await repo.toggle_setting(-1001, "invalid_column_name")
 
@@ -131,7 +123,6 @@ async def test_config_repo_llm_settings(test_db: Database) -> None:
     async with test_db.connect() as conn:
         repo = ConfigRepository(conn)
 
-        # 1. Defaults
         conf = await repo.get_llm_config(
             default_enabled=False,
             default_api_key="default_key",
@@ -143,7 +134,6 @@ async def test_config_repo_llm_settings(test_db: Database) -> None:
         assert conf["llm_base_url"] == "https://api.openai.com/v1"
         assert conf["llm_model"] == "gpt-4o-mini"
 
-        # 2. Update config dynamically
         updated = await repo.set_llm_config(
             enabled=True,
             api_key="sk-new-secret-key",
@@ -155,7 +145,6 @@ async def test_config_repo_llm_settings(test_db: Database) -> None:
         assert updated["llm_base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
         assert updated["llm_model"] == "gemini-1.5-flash"
 
-        # 3. Retrieve again
         persisted = await repo.get_llm_config()
         assert persisted["llm_enabled"] is True
         assert persisted["llm_api_key"] == "sk-new-secret-key"
