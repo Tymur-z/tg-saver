@@ -149,6 +149,7 @@ class ChatRepository(BaseRepository):
             "profanity_filter_enabled",
             "profanity_warn_enabled",
             "profanity_delete_enabled",
+            "chat_ai_enabled",
         }
         if field_name not in allowed_fields:
             raise ValueError(f"Invalid chat setting field: {field_name}")

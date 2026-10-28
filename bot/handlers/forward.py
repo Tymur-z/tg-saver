@@ -13,6 +13,7 @@ from database.repositories.chat_repo import ChatRepository
 from forwarder.engine import ForwardEngine
 from forwarder.media_handler import MediaHandler
 from analytics.profiler import StyleProfiler
+from moderation.companion import ChatCompanion
 from moderation.profanity import ProfanityDetector
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ async def handle_incoming_message(
     settings: Settings,
     db: Database,
     profanity_detector: Optional[ProfanityDetector] = None,
+    companion: Optional[ChatCompanion] = None,
     album_messages: Optional[List[Message]] = None,
 ) -> None:
     # Ignore commands
@@ -46,7 +48,10 @@ async def handle_incoming_message(
     if msg_text and msg_text.startswith("/"):
         return
 
-    if message.chat.type in ("group", "supergroup") and profanity_detector:
+    chat = None
+    is_profane = False
+
+    if message.chat.type in ("group", "supergroup"):
         try:
             async with db.connect() as conn:
                 chat_repo = ChatRepository(conn)
@@ -60,11 +65,12 @@ async def handle_incoming_message(
                     )
                     chat = await chat_repo.get_chat(message.chat.id)
 
-            if chat and chat.get("profanity_filter_enabled"):
+            if chat and chat.get("profanity_filter_enabled") and profanity_detector:
                 text_to_check = MediaHandler.get_text_or_caption(message)
                 if text_to_check and text_to_check.strip():
                     prof_result = await profanity_detector.check_text(text_to_check)
                     if prof_result.is_profane:
+                        is_profane = True
                         logger.info(
                             "Profanity detected in chat %s from user %s: %s (%s)",
                             message.chat.id,
@@ -89,14 +95,25 @@ async def handle_incoming_message(
                             except Exception as warn_err:
                                 logger.warning("Could not send warning in %s: %s", message.chat.id, warn_err)
         except Exception as mod_err:
-            logger.exception("Error during profanity check for message %s: %s", message.message_id, mod_err)
+            logger.exception("Error during chat settings check for message %s: %s", message.message_id, mod_err)
+
+    # Save to context buffer for companion awareness
+    if companion and not is_profane and msg_text:
+        u_name = message.from_user.full_name if message.from_user else "Участник"
+        companion.context_buffer.add_message(
+            chat_id=message.chat.id,
+            user_id=message.from_user.id if message.from_user else 0,
+            user_name=u_name,
+            text=msg_text,
+            is_bot=False,
+        )
 
     try:
         await forward_engine.process_incoming_message(message, album_messages=album_messages)
     except Exception as e:
         logger.exception("Error forwarding message %s: %s", message.message_id, e)
 
-    if settings.ANALYTICS_ENABLED and message.from_user:
+    if settings.ANALYTICS_ENABLED and message.from_user and not is_profane:
         text = MediaHandler.get_text_or_caption(message)
         if text.strip():
             user_id = message.from_user.id
@@ -116,3 +133,33 @@ async def handle_incoming_message(
                 )
             except Exception as e:
                 logger.exception("Error profiling message %s: %s", message.message_id, e)
+
+    # Companion conversation handler
+    if companion and not is_profane:
+        is_chat_ai_allowed = False
+        if message.chat.type in ("group", "supergroup"):
+            if chat:
+                is_chat_ai_allowed = bool(chat.get("chat_ai_enabled", 0))
+        elif message.chat.type == "private":
+            is_chat_ai_allowed = True
+
+        if is_chat_ai_allowed:
+            try:
+                bot_user = await companion.get_bot_user(message.bot)
+                triggered, prompt = companion.is_triggered(
+                    message,
+                    bot_username=bot_user.username,
+                    bot_id=bot_user.id,
+                )
+                if triggered and prompt:
+                    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                    caller_name = message.from_user.first_name if message.from_user else "Собеседник"
+                    reply_text = await companion.generate_reply(
+                        chat_id=message.chat.id,
+                        user_name=caller_name,
+                        user_prompt=prompt,
+                    )
+                    if reply_text:
+                        await message.reply(reply_text, parse_mode=None)
+            except Exception as e:
+                logger.warning("Error in companion handler for message %s: %s", message.message_id, e)

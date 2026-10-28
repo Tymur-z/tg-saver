@@ -49,7 +49,7 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="📡 Все чаты бота", callback_data="admin_all_chats"),
-                InlineKeyboardButton(text="🛡️ Модерация и маты", callback_data="admin_moderation_chats"),
+                InlineKeyboardButton(text="🛡️ Модерация и чаты", callback_data="admin_moderation_chats"),
             ],
             [
                 InlineKeyboardButton(text="🤖 Настройки ИИ (LLM)", callback_data="admin_llm_settings"),
@@ -329,16 +329,19 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
     filter_on = bool(chat.get("profanity_filter_enabled", 0))
     warn_on = bool(chat.get("profanity_warn_enabled", 0))
     del_on = bool(chat.get("profanity_delete_enabled", 0))
+    ai_on = bool(chat.get("chat_ai_enabled", 0))
 
     btn_filter = f"{'🟢' if filter_on else '⚪'} Фильтр матов: {'ВКЛ' if filter_on else 'ВЫКЛ'}"
     btn_warn = f"{'⚠️' if warn_on else '⚪'} Предупреждать нарушителя: {'ВКЛ' if warn_on else 'ВЫКЛ'}"
     btn_del = f"{'🗑️' if del_on else '⚪'} Удалять сообщение: {'ВКЛ' if del_on else 'ВЫКЛ'}"
+    btn_ai = f"{'💬' if ai_on else '⚪'} Общение с ИИ (тег/ответ): {'ВКЛ' if ai_on else 'ВЫКЛ'}"
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=btn_filter, callback_data=f"mod_toggle:{cid}:profanity_filter_enabled")],
             [InlineKeyboardButton(text=btn_warn, callback_data=f"mod_toggle:{cid}:profanity_warn_enabled")],
             [InlineKeyboardButton(text=btn_del, callback_data=f"mod_toggle:{cid}:profanity_delete_enabled")],
+            [InlineKeyboardButton(text=btn_ai, callback_data=f"mod_toggle:{cid}:chat_ai_enabled")],
             [InlineKeyboardButton(text="⬅️ К списку чатов", callback_data="admin_moderation_chats")],
         ]
     )

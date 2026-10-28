@@ -17,6 +17,7 @@ from forwarder.queue import ForwardQueue
 from analytics.profiler import StyleProfiler
 from moderation.llm_client import LLMClient
 from moderation.profanity import ProfanityDetector
+from moderation.companion import ChatCompanion
 from bot.middlewares.auth import UserAuthMiddleware
 from bot.middlewares.album import MediaGroupMiddleware
 from bot.handlers import (
@@ -45,6 +46,7 @@ def create_dispatcher(
     style_profiler: StyleProfiler,
     profanity_detector: Optional[ProfanityDetector] = None,
     llm_client: Optional[LLMClient] = None,
+    companion: Optional[ChatCompanion] = None,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
 
@@ -57,6 +59,8 @@ def create_dispatcher(
         dp["profanity_detector"] = profanity_detector
     if llm_client:
         dp["llm_client"] = llm_client
+    if companion:
+        dp["companion"] = companion
 
     auth_middleware = UserAuthMiddleware(db=db, settings=settings)
     dp.message.outer_middleware(auth_middleware)
@@ -121,6 +125,9 @@ async def start_application(settings: Settings) -> None:
         llm_client=llm_client,
         llm_enabled=llm_conf["llm_enabled"],
     )
+    companion = ChatCompanion(
+        llm_client=llm_client,
+    )
 
     dp = create_dispatcher(
         settings=settings,
@@ -130,6 +137,7 @@ async def start_application(settings: Settings) -> None:
         style_profiler=style_profiler,
         profanity_detector=profanity_detector,
         llm_client=llm_client,
+        companion=companion,
     )
 
     queue.start()

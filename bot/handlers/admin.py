@@ -500,13 +500,15 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
     f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
     w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
     d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
+    ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
 
     lines = [
         f"🛡️ <b>Настройки модерации:</b> {title}",
         f"🆔 ID чата: <code>{chat_id}</code> (тип: <i>{c_type}</i>)\n",
         f"• <b>Фильтр ненормативной лексики:</b> {f_on}",
         f"• <b>Предупреждать нарушителя:</b> {w_on}",
-        f"• <b>Удалять сообщения с матом:</b> {d_on}\n",
+        f"• <b>Удалять сообщения с матом:</b> {d_on}",
+        f"• <b>Общение с ИИ (тег/ответ):</b> {ai_on}\n",
         "<i>Нажмите на кнопку ниже, чтобы переключить соответствующий параметр:</i>",
     ]
     text = "\n".join(lines)
@@ -538,13 +540,15 @@ async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_ad
     f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
     w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
     d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
+    ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
 
     lines = [
         f"🛡️ <b>Настройки модерации:</b> {title}",
         f"🆔 ID чата: <code>{chat_id}</code> (тип: <i>{c_type}</i>)\n",
         f"• <b>Фильтр ненормативной лексики:</b> {f_on}",
         f"• <b>Предупреждать нарушителя:</b> {w_on}",
-        f"• <b>Удалять сообщения с матом:</b> {d_on}\n",
+        f"• <b>Удалять сообщения с матом:</b> {d_on}",
+        f"• <b>Общение с ИИ (тег/ответ):</b> {ai_on}\n",
         "<i>Нажмите на кнопку ниже, чтобы переключить соответствующий параметр:</i>",
     ]
     text = "\n".join(lines)
