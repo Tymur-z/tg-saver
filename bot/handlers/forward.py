@@ -10,6 +10,7 @@ from aiogram.types import Message
 from config.settings import Settings
 from database.connection import Database
 from database.repositories.chat_repo import ChatRepository
+from database.repositories.route_repo import RouteRepository
 from forwarder.engine import ForwardEngine
 from forwarder.media_handler import MediaHandler
 from analytics.profiler import StyleProfiler
@@ -114,25 +115,36 @@ async def handle_incoming_message(
         logger.exception("Error forwarding message %s: %s", message.message_id, e)
 
     if settings.ANALYTICS_ENABLED and message.from_user and not is_profane:
-        text = MediaHandler.get_text_or_caption(message)
-        if text.strip():
-            user_id = message.from_user.id
-            chat_id = message.chat.id
-            is_owner = bool(settings.OWNER_ID > 0 and user_id == settings.OWNER_ID)
-            is_reply = bool(message.reply_to_message is not None)
-            created_at = message.date if message.date else datetime.now()
-
+        is_profileable = message.chat.type in ("group", "supergroup", "channel")
+        if not is_profileable and message.chat.type == "private":
             try:
-                await style_profiler.process_message(
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    text=text,
-                    created_at=created_at,
-                    is_reply=is_reply,
-                    is_owner=is_owner,
-                )
-            except Exception as e:
-                logger.exception("Error profiling message %s: %s", message.message_id, e)
+                async with db.connect() as conn:
+                    r_repo = RouteRepository(conn)
+                    active_src_routes = await r_repo.get_routes_for_source(message.chat.id, active_only=True)
+                    is_profileable = bool(active_src_routes)
+            except Exception:
+                is_profileable = False
+
+        if is_profileable:
+            text = MediaHandler.get_text_or_caption(message)
+            if text.strip():
+                user_id = message.from_user.id
+                chat_id = message.chat.id
+                is_owner = bool(settings.OWNER_ID > 0 and user_id == settings.OWNER_ID)
+                is_reply = bool(message.reply_to_message is not None)
+                created_at = message.date if message.date else datetime.now()
+
+                try:
+                    await style_profiler.process_message(
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        text=text,
+                        created_at=created_at,
+                        is_reply=is_reply,
+                        is_owner=is_owner,
+                    )
+                except Exception as e:
+                    logger.exception("Error profiling message %s: %s", message.message_id, e)
 
     # Companion conversation handler
     if companion and not is_profane:

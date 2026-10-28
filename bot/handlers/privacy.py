@@ -119,7 +119,7 @@ async def cb_delete_all_prompt(callback: CallbackQuery, is_admin: bool = False) 
 
 
 @router.callback_query(F.data.startswith("confirm_del:"))
-async def cb_confirm_delete(callback: CallbackQuery, db: Database) -> None:
+async def cb_confirm_delete(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
     action_type = callback.data.split(":")[1]
     async with db.connect() as conn:
         repo = ProfileRepository(conn)
@@ -131,5 +131,5 @@ async def cb_confirm_delete(callback: CallbackQuery, db: Database) -> None:
             deleted = await repo.delete_all_profiles()
             msg = f"✅ Вся аналитическая база профилей успешно очищена (удалено записей: {deleted})."
 
-    await callback.message.edit_text(msg, reply_markup=main_menu_kb())
+    await callback.message.edit_text(msg, reply_markup=main_menu_kb(is_admin=is_admin))
     await callback.answer()

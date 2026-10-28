@@ -56,7 +56,10 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🔑 Пароль доступа", callback_data="admin_password"),
             ],
             [
+                InlineKeyboardButton(text="📊 Стили участников", callback_data="admin_all_profiles"),
                 InlineKeyboardButton(text="⚙️ Статус и пауза", callback_data="nav_status"),
+            ],
+            [
                 InlineKeyboardButton(text="⬅️ В главное меню", callback_data="nav_main"),
             ],
         ]
@@ -411,4 +414,18 @@ def llm_cancel_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_llm_settings")],
         ]
     )
+
+
+def my_style_kb(is_admin: bool = False) -> InlineKeyboardMarkup:
+    buttons = []
+    if is_admin:
+        buttons.append([
+            InlineKeyboardButton(text="👥 Стили всех участников", callback_data="admin_all_profiles"),
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="🔒 Приватность", callback_data="nav_privacy"),
+        InlineKeyboardButton(text="⬅️ В главное меню", callback_data="nav_main"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 
