@@ -44,7 +44,7 @@ async def handle_incoming_message(
     companion: Optional[ChatCompanion] = None,
     album_messages: Optional[List[Message]] = None,
 ) -> None:
-    if message.migrate_to_chat_id:
+    if isinstance(getattr(message, "migrate_to_chat_id", None), int):
         try:
             async with db.connect() as conn:
                 await RouteRepository(conn).migrate_chat_id(message.chat.id, message.migrate_to_chat_id)
