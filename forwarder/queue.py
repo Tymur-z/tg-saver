@@ -8,11 +8,12 @@ from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
+from aiogram.exceptions import TelegramAPIError, TelegramMigrateToChat, TelegramRetryAfter
 from aiogram.types import Message
 
 from database.connection import Database
 from database.repositories.forward_repo import ForwardRepository
+from database.repositories.route_repo import RouteRepository
 from forwarder.media_handler import MediaHandler
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,18 @@ class ForwardQueue:
             else:
                 error_msg = f"Failed after {self.max_retries} flood-wait retries"
                 await self._record_failure(job, error_msg)
+
+        except TelegramMigrateToChat as e:
+            new_id = e.migrate_to_chat_id
+            logger.warning("Chat %s was upgraded to supergroup %s, updating routes.", job.dest_chat_id, new_id)
+            async with self.db.connect() as conn:
+                await RouteRepository(conn).migrate_chat_id(job.dest_chat_id, new_id)
+            if job.retry_count < self.max_retries:
+                job.retry_count += 1
+                job.dest_chat_id = new_id
+                await self.queue.put(job)
+            else:
+                await self._record_failure(job, f"Chat upgraded to supergroup {new_id}")
 
         except TelegramAPIError as e:
             error_text = str(e)

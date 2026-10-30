@@ -231,3 +231,7 @@ class RouteRepository(BaseRepository):
             elif val is None:
                 res[key] = []
         return res
+
+    async def migrate_chat_id(self, old_id: int, new_id: int) -> None:
+        await self.execute("UPDATE routes SET source_chat_id = ? WHERE source_chat_id = ?", (new_id, old_id))
+        await self.execute("UPDATE routes SET destination_chat_id = ? WHERE destination_chat_id = ?", (new_id, old_id))

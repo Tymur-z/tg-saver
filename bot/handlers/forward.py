@@ -44,6 +44,15 @@ async def handle_incoming_message(
     companion: Optional[ChatCompanion] = None,
     album_messages: Optional[List[Message]] = None,
 ) -> None:
+    if message.migrate_to_chat_id:
+        try:
+            async with db.connect() as conn:
+                await RouteRepository(conn).migrate_chat_id(message.chat.id, message.migrate_to_chat_id)
+            logger.info("Chat %s migrated to %s, routes updated.", message.chat.id, message.migrate_to_chat_id)
+        except Exception as e:
+            logger.exception("Could not apply chat migration for %s: %s", message.chat.id, e)
+        return
+
     # Ignore commands
     msg_text = message.text or message.caption
     if msg_text and msg_text.startswith("/"):
