@@ -181,6 +181,11 @@ async def handle_incoming_message(
                         user_prompt=prompt,
                     )
                     if reply_text:
-                        await message.reply(reply_text, parse_mode=None)
+                        sent_reply = await message.reply(reply_text, parse_mode=None)
+                        # Also forward/copy Richard's reply to destination chats if active routes exist
+                        try:
+                            await forward_engine.process_incoming_message(sent_reply)
+                        except Exception as fwd_err:
+                            logger.debug("Could not mirror companion reply to routes: %s", fwd_err)
             except Exception as e:
                 logger.warning("Error in companion handler for message %s: %s", message.message_id, e)

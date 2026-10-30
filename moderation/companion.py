@@ -140,10 +140,11 @@ class ChatCompanion:
                 if message.reply_to_message.from_user.username.lower() == bot_username.lower():
                     is_reply_to_bot = True
 
-        # 2. Check if the bot is mentioned
+        # 2. Check if the bot is mentioned (@username, text mention, or by name "Richard" / "Ричард")
         has_mention = False
+        lower_text = raw_text.lower()
+
         if bot_username:
-            lower_text = raw_text.lower()
             mention_target = f"@{bot_username.lower()}"
             if mention_target in lower_text:
                 has_mention = True
@@ -160,14 +161,21 @@ class ChatCompanion:
                         has_mention = True
                         break
 
-        if not is_reply_to_bot and not has_mention:
+        # Check for direct name addressing ("ричард", "richard")
+        has_name_call = bool(re.search(r"(?:^|[\s,!?])(ричард|richard)(?:[\s,!?]|$)", lower_text, re.IGNORECASE))
+
+        if not is_reply_to_bot and not has_mention and not has_name_call:
             return False, ""
 
-        # Clean the prompt
+        # Clean the prompt from mentions and name calls
         clean_prompt = raw_text
         if bot_username:
             pattern = re.compile(rf"@{re.escape(bot_username)}\b", re.IGNORECASE)
             clean_prompt = pattern.sub("", clean_prompt).strip()
+
+        # Clean name invocation at start or boundaries
+        clean_prompt = re.sub(r"^(?:ричард|richard)[,\s:!-]+", "", clean_prompt, flags=re.IGNORECASE).strip()
+        clean_prompt = re.sub(r"(?:^|[\s,])(?:ричард|richard)(?:[\s,]|$)", " ", clean_prompt, flags=re.IGNORECASE).strip()
 
         if not clean_prompt:
             clean_prompt = "Привет!"
