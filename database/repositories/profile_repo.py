@@ -13,7 +13,7 @@ class ProfileRepository(BaseRepository):
 
     async def get_profile(self, user_id: int, chat_id: int = 0) -> Optional[Dict[str, Any]]:
         row = await self.fetch_one(
-            "SELECT * FROM user_style_profiles WHERE user_id = ? AND chat_id = ?",
+            "SELECT p.*, u.username, u.first_name, u.last_name, u.role FROM user_style_profiles p LEFT JOIN users u ON p.user_id = u.user_id WHERE p.user_id = ? AND p.chat_id = ?",
             (user_id, chat_id),
         )
         return self._format_profile(dict(row)) if row else None
@@ -72,7 +72,7 @@ class ProfileRepository(BaseRepository):
 
     async def list_profiles(self, limit: int = 50) -> List[Dict[str, Any]]:
         rows = await self.fetch_all(
-            "SELECT * FROM user_style_profiles WHERE chat_id = 0 ORDER BY sample_count DESC LIMIT ?",
+            "SELECT p.*, u.username, u.first_name, u.last_name, u.role FROM user_style_profiles p LEFT JOIN users u ON p.user_id = u.user_id WHERE p.chat_id = 0 ORDER BY p.sample_count DESC LIMIT ?",
             (limit,),
         )
         return [self._format_profile(dict(r)) for r in rows]

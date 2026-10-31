@@ -131,13 +131,21 @@ class ProfanityDetector:
         text: str,
         strictness: str = "hard",
         custom_words: Optional[List[str]] = None,
+        whitelist_words: Optional[List[str]] = None,
     ) -> Optional[ProfanityResult]:
         if not text or not text.strip():
             return None
 
         normalized = self.normalize(text)
 
-        # 0. Проверка пользовательских стоп-слов чата
+        # 0. Проверка белого списка слов чата (whitelist)
+        if whitelist_words:
+            for ww in whitelist_words:
+                ww_norm = self.normalize(ww.strip())
+                if ww_norm and len(ww_norm) >= 2:
+                    normalized = re.sub(rf"\b{re.escape(ww_norm)}\b", " ", normalized)
+
+        # 0.1 Проверка пользовательских стоп-слов чата
         if custom_words:
             for cw in custom_words:
                 cw_norm = self.normalize(cw.strip())
@@ -232,17 +240,19 @@ class ProfanityDetector:
         text: str,
         strictness: str = "hard",
         custom_words: Optional[List[str]] = None,
+        whitelist_words: Optional[List[str]] = None,
     ) -> ProfanityResult:
         cleaned = text.strip()
         if not cleaned:
             return ProfanityResult(is_profane=False, method="clean", reason="", confidence=1.0)
 
         cw_key = ",".join(sorted(custom_words)) if custom_words else ""
-        cache_key = f"{strictness}:{cw_key}:{cleaned}"
+        wl_key = ",".join(sorted(whitelist_words)) if whitelist_words else ""
+        cache_key = f"{strictness}:{cw_key}:{wl_key}:{cleaned}"
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        regex_match = self.check_regex(cleaned, strictness=strictness, custom_words=custom_words)
+        regex_match = self.check_regex(cleaned, strictness=strictness, custom_words=custom_words, whitelist_words=whitelist_words)
         if regex_match:
             self._save_to_cache(cache_key, regex_match)
             return regex_match

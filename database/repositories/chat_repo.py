@@ -173,6 +173,45 @@ class ChatRepository(BaseRepository):
         )
         return new_val
 
+
+    async def set_delete_warn_seconds(self, chat_id: int, seconds: int) -> None:
+        val = max(0, seconds)
+        await self.execute(
+            "UPDATE chats SET profanity_delete_warn_seconds = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
+            (val, chat_id),
+        )
+
+    async def cycle_delete_warn_seconds(self, chat_id: int) -> int:
+        chat = await self.get_chat(chat_id)
+        current = int(chat.get("profanity_delete_warn_seconds", 0)) if chat else 0
+        cycle_map = {0: 15, 15: 30, 30: 60, 60: 0}
+        new_val = cycle_map.get(current, 0)
+        await self.set_delete_warn_seconds(chat_id, new_val)
+        return new_val
+
+    async def set_whitelist_words(self, chat_id: int, words: List[str]) -> None:
+        import json
+        clean_words = [w.strip().lower() for w in words if w.strip()]
+        await self.execute(
+            "UPDATE chats SET custom_whitelist_words = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
+            (json.dumps(clean_words, ensure_ascii=False), chat_id),
+        )
+
+    async def set_auto_mute(self, chat_id: int, duration_seconds: int) -> None:
+        val = max(0, duration_seconds)
+        await self.execute(
+            "UPDATE chats SET auto_mute_duration = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
+            (val, chat_id),
+        )
+
+    async def cycle_auto_mute(self, chat_id: int) -> int:
+        chat = await self.get_chat(chat_id)
+        current = int(chat.get("auto_mute_duration", 0)) if chat else 0
+        cycle_map = {0: 600, 600: 3600, 3600: 86400, 86400: 0}
+        new_val = cycle_map.get(current, 0)
+        await self.set_auto_mute(chat_id, new_val)
+        return new_val
+
     async def toggle_setting(self, chat_id: int, field_name: str) -> bool:
         """Toggle a boolean moderation setting for a specific chat."""
         allowed_fields = {
@@ -180,6 +219,7 @@ class ChatRepository(BaseRepository):
             "profanity_warn_enabled",
             "profanity_delete_enabled",
             "chat_ai_enabled",
+            "llm_moderation_enabled",
         }
         if field_name not in allowed_fields:
             raise ValueError(f"Invalid chat setting field: {field_name}")
@@ -209,3 +249,44 @@ class ChatRepository(BaseRepository):
     async def delete_chat(self, chat_id: int) -> bool:
         cursor = await self.execute("DELETE FROM chats WHERE chat_id = ?", (chat_id,))
         return cursor.rowcount > 0
+
+    async def add_companion_message(
+        self,
+        chat_id: int,
+        user_id: int,
+        user_name: str,
+        text: str,
+        is_bot: bool = False,
+    ) -> None:
+        await self.execute(
+            "INSERT INTO companion_chat_history (chat_id, user_id, user_name, text, is_bot) VALUES (?, ?, ?, ?, ?)",
+            (chat_id, user_id, user_name, text, 1 if is_bot else 0),
+        )
+
+    async def get_companion_history(self, chat_id: int, limit: int = 25) -> List[Dict[str, Any]]:
+        rows = await self.fetch_all(
+            "SELECT * FROM (SELECT * FROM companion_chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
+            (chat_id, limit),
+        )
+        return [dict(r) for r in rows]
+
+    async def clear_companion_history(self, chat_id: int) -> int:
+        cursor = await self.execute("DELETE FROM companion_chat_history WHERE chat_id = ?", (chat_id,))
+        return cursor.rowcount
+
+    async def clear_all_companion_history(self) -> int:
+        cursor = await self.execute("DELETE FROM companion_chat_history")
+        return cursor.rowcount
+
+    async def record_violation(self, chat_id: int, user_id: int, reason: str, severity: str = "hard") -> None:
+        await self.execute(
+            "INSERT INTO moderation_violations (chat_id, user_id, reason, severity) VALUES (?, ?, ?, ?)",
+            (chat_id, user_id, reason, severity),
+        )
+
+    async def count_recent_violations(self, chat_id: int, user_id: int, hours: int = 24) -> int:
+        row = await self.fetch_one(
+            "SELECT COUNT(*) AS cnt FROM moderation_violations WHERE chat_id = ? AND user_id = ? AND created_at >= datetime('now', '-' || ? || ' hours')",
+            (chat_id, user_id, hours),
+        )
+        return int(row["cnt"]) if row else 0

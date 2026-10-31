@@ -31,6 +31,9 @@ from bot.keyboards.inline import (
     llm_tokens_select_kb,
     mod_custom_words_kb,
     mod_strictness_select_kb,
+    mod_whitelist_kb,
+    llm_persona_select_kb,
+    llm_trigger_select_kb,
     main_menu_kb,
     moderation_chats_list_kb,
     password_management_kb,
@@ -512,81 +515,58 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
     f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
     w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
     d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
-    ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
+    a_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
+
     strictness = chat.get("profanity_strictness", "hard")
-    if strictness == "hard":
-        strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон)"
-    elif strictness == "medium":
-        strictness_desc = "⚠️ Жесткий мат + грубые слова (урод, дебил)"
-    else:
-        strictness_desc = "🛑 Максимальная строгость (+ блин, тупой)"
+    strict_labels = {
+        "hard": "🤬 Только жесткий мат",
+        "medium": "⚠️ Жесткий мат + грубые слова",
+        "all": "🛑 Максимальная (+ любая брань)",
+    }
+    strict_desc = strict_labels.get(strictness, "🤬 Только жесткий мат")
+
+    warn_sec = int(chat.get("profanity_delete_warn_seconds", 0))
+    warn_sec_str = "Не удалять" if warn_sec == 0 else f"{warn_sec} сек."
+
+    auto_mute = int(chat.get("auto_mute_duration", 0))
+    auto_mute_str = "Выключено" if auto_mute == 0 else (f"{auto_mute // 60} мин." if auto_mute < 3600 else f"{auto_mute // 3600} ч.")
 
     raw_cw = chat.get("custom_profanity_words", "[]")
+    raw_wl = chat.get("custom_whitelist_words", "[]")
     try:
-        cw_list = json.loads(raw_cw) if isinstance(raw_cw, str) else (raw_cw or [])
+        c_words = json.loads(raw_cw) if isinstance(raw_cw, str) else (raw_cw or [])
     except Exception:
-        cw_list = []
-    cw_desc = f"<code>{', '.join(cw_list[:5])}</code>" if cw_list else "<i>нет</i>"
-    if len(cw_list) > 5:
-        cw_desc += f" <i>(+еще {len(cw_list)-5})</i>"
+        c_words = []
+    try:
+        w_words = json.loads(raw_wl) if isinstance(raw_wl, str) else (raw_wl or [])
+    except Exception:
+        w_words = []
 
-    div = "━━━━━━━━━━━━━━━━━━━━━━"
-
-    lines = [
-        f"🛡️ <b>Настройки чата:</b> {title}",
-        f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
-        "🛡️ <b>Модерация ненормативной лексики:</b>",
-        f"• Фильтр матов: {f_on}",
-        f"• Режим строгости: <b>{strictness_desc}</b>",
-        f"• Свои стоп-слова: {cw_desc}",
-        f"• Предупреждать нарушителя: {w_on}",
-        f"• Удалять сообщения с матом: {d_on}\n{div}",
-        "💬 <b>Режим ИИ-собеседника:</b>",
-        f"• Ответ на теги и Reply: {ai_on}\n{div}",
-        "👇 <i>Нажмите на кнопку ниже для настройки:</i>",
-    ]
-    text = "\n".join(lines)
-    await callback.message.edit_text(text, reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
-    await callback.answer()
-
-
-
-@router.callback_query(F.data.startswith("mod_strictness:"))
-async def cb_chat_moderation_strictness(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
-    if not is_admin:
-        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
-        return
-
-    chat_id = int(callback.data.split(":")[1])
-    async with db.connect() as conn:
-        chat_repo = ChatRepository(conn)
-        new_strictness = await chat_repo.cycle_strictness(chat_id)
-        chat = await chat_repo.get_chat(chat_id)
-
-    title = chat.get("title") or f"ID {chat_id}"
-    c_type = chat.get("chat_type", "group")
-    f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
-    w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
-    d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
-    ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
-    strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон и т.д.)" if new_strictness == "hard" else "⚠️ Жесткий мат + легкая брань (блин, тупой, дурак и т.д.)"
-    div = "━━━━━━━━━━━━━━━━━━━━━━"
+    cw_desc = f"{len(c_words)} шт." if c_words else "<i>(нет)</i>"
+    wl_desc = f"{len(w_words)} шт." if w_words else "<i>(нет)</i>"
 
     lines = [
-        f"🛡️ <b>Настройки чата:</b> {title}",
-        f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
-        "🛡️ <b>Модерация ненормативной лексики:</b>",
-        f"• Фильтр матов: {f_on}",
-        f"• Режим строгости: <b>{strictness_desc}</b>",
-        f"• Предупреждать нарушителя: {w_on}",
-        f"• Удалять сообщения с матом: {d_on}\n{div}",
-        "💬 <b>Режим ИИ-собеседника:</b>",
-        f"• Ответ на теги и Reply: {ai_on}\n{div}",
-        "👇 <i>Нажмите на кнопку ниже для переключения:</i>",
+        f"🛡️ <b>Настройки модерации и чата #{chat_id}</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"• 🏷️ <b>Название:</b> <b>{title}</b>",
+        f"• 🆔 <b>ID чата:</b> <code>{chat_id}</code>",
+        f"• 📂 <b>Тип:</b> {c_type}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "⚙️ <b>Параметры фильтрации:</b>",
+        f"• 🎯 <b>Строгость мата:</b> <b>{strict_desc}</b>",
+        f"• 🗑️ <b>Удаление сообщений:</b> {d_on}",
+        f"• ⚠️ <b>Предупреждать нарушителя:</b> {w_on}",
+        f"• ⏱️ <b>Автоудаление предупреждения:</b> <b>{warn_sec_str}</b>",
+        f"• 🔇 <b>Авто-мут при 3 нарушениях:</b> <b>{auto_mute_str}</b>",
+        f"• 📝 <b>Черный список (стоп-слова):</b> {cw_desc}",
+        f"• ⚪ <b>Белый список (исключения):</b> {wl_desc}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "🤖 <b>ИИ Собеседник (Ричард):</b>",
+        f"• 💬 <b>Общение в чате:</b> {a_on}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "💡 <i>Используйте кнопки ниже для переключения опций:</i>",
     ]
     await callback.message.edit_text("\n".join(lines), reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
-    lbl = "Только жесткий мат" if new_strictness == "hard" else "Жесткий мат + легкая брань"
-    await callback.answer(f"Строгость: {lbl}")
 
 
 @router.callback_query(F.data.startswith("mod_toggle:"))
@@ -653,6 +633,7 @@ async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_ad
 
 
 class AdminLLMStates(StatesGroup):
+    waiting_for_custom_persona = State()
     waiting_for_api_key = State()
     waiting_for_model = State()
     waiting_for_base_url = State()
@@ -662,9 +643,10 @@ class AdminLLMStates(StatesGroup):
 
 class AdminModStates(StatesGroup):
     waiting_for_custom_words = State()
+    waiting_for_whitelist_words = State()
 
 
-async def _render_llm_settings(conn, settings: Settings) -> tuple[str, bool]:
+async def _render_llm_settings(conn, settings: Settings) -> tuple[str, bool, dict]:
     config_repo = ConfigRepository(conn)
     conf = await config_repo.get_llm_config(
         default_enabled=settings.LLM_ENABLED,
@@ -687,20 +669,45 @@ async def _render_llm_settings(conn, settings: Settings) -> tuple[str, bool]:
     ctx = conf.get("companion_context_limit", 15)
     toks = conf.get("companion_max_tokens", 800)
     temp = conf.get("companion_temperature", 0.7)
+    persona = conf.get("companion_persona", "student")
+    persona_map = {
+        "student": "🎓 Студент-сокурсник",
+        "expert": "💼 Деловой эксперт",
+        "sarcastic": "😈 Дерзкий / Остроумный",
+        "concise": "⚡ Краткий / По делу",
+        "custom": "✍️ Свой системный промпт",
+    }
+    persona_str = persona_map.get(persona, "🎓 Студент-сокурсник")
+
+    trigger = conf.get("companion_trigger_mode", "name_and_reply")
+    trigger_str = "🗣️ Имя («Ричард») + Реплай" if trigger == "name_and_reply" else "📢 Все упоминания"
+
+    typing_on = conf.get("companion_typing_indicator", True)
+    typing_str = "🟢 ВКЛ" if typing_on else "⚪ ВЫКЛ"
+
+    rand_chance = conf.get("companion_random_reply_chance", 0)
+    rand_str = "Выключено" if rand_chance == 0 else f"{rand_chance}%"
 
     lines = [
-        f"🤖 <b>Панель управления ИИ (LLM)</b>\n{div}",
+        "🤖 <b>Панель управления ИИ (Ричард & LLM)</b>",
+        div,
         f"• ⚡ <b>Статус ИИ:</b> {status_str}",
         f"• 🧠 <b>Модель:</b> <code>{conf['llm_model']}</code>",
         f"• 🌐 <b>Эндпоинт (URL/IP):</b> <code>{conf['llm_base_url']}</code>",
-        f"• 🔑 <b>API-ключ:</b> {key_masked}\n{div}",
-        "⚙️ <b>Параметры генерации и контекста:</b>",
+        f"• 🔑 <b>API-ключ:</b> {key_masked}",
+        div,
+        "⚙️ <b>Параметры генерации и памяти:</b>",
         f"• 📚 <b>Контекст чата:</b> <code>{ctx}</code> недавних сообщ.",
         f"• 📝 <b>Длина ответа:</b> <code>{toks}</code> токенов",
-        f"• 🌡️ <b>Креативность:</b> <code>{temp}</code>\n{div}",
+        f"• 🌡️ <b>Креативность:</b> <code>{temp}</code>",
+        f"• 🎭 <b>Характер / Личность:</b> <b>{persona_str}</b>",
+        f"• 🎯 <b>Триггер в группе:</b> {trigger_str}",
+        f"• ⌨️ <b>Статус «Печатает...»:</b> {typing_str}",
+        f"• 🎲 <b>Случайные реплики:</b> {rand_str}",
+        div,
         "💡 <i>Поддерживаются OpenAI, Google Gemini, DeepSeek и локальные LLM (vLLM / Ollama).</i>",
     ]
-    return "\n".join(lines), is_on
+    return "\n".join(lines), is_on, conf
 
 
 @router.message(Command("llm"))
@@ -721,7 +728,7 @@ async def cmd_admin_llm_settings(
         await state.clear()
 
     async with db.connect() as conn:
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     kb = llm_settings_kb(is_on)
     if isinstance(event, CallbackQuery):
@@ -748,10 +755,10 @@ async def cb_llm_toggle_enabled(
         curr = await config_repo.get_llm_config(default_enabled=settings.LLM_ENABLED)
         new_val = not curr["llm_enabled"]
         await config_repo.set_llm_config(enabled=new_val)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     profanity_detector.set_llm_enabled(new_val)
-    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
     state_desc = "включен" if new_val else "отключен"
     await callback.answer(f"ИИ {state_desc}")
 
@@ -799,10 +806,10 @@ async def proc_admin_llm_api_key(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(api_key=new_key)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     llm_client.update_config(api_key=new_key)
-    await message.answer(f"✅ <b>API-ключ успешно обновлен и сохранён!</b>\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await message.answer(f"✅ <b>API-ключ успешно обновлен и сохранён!</b>\n\n{text}", reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "llm_select_model")
@@ -835,10 +842,10 @@ async def cb_llm_preset_model(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(model=model_name)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     llm_client.update_config(model=model_name)
-    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
     await callback.answer(f"Модель изменена на {model_name}")
 
 
@@ -879,10 +886,10 @@ async def proc_admin_llm_custom_model(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(model=model_name)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     llm_client.update_config(model=model_name)
-    await message.answer(f"✅ <b>Модель установлена:</b> <code>{model_name}</code>\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await message.answer(f"✅ <b>Модель установлена:</b> <code>{model_name}</code>\n\n{text}", reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "llm_select_url")
@@ -915,10 +922,10 @@ async def cb_llm_preset_url(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(base_url=url)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     llm_client.update_config(base_url=url)
-    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
     await callback.answer("URL эндпоинта обновлен")
 
 
@@ -962,10 +969,10 @@ async def proc_admin_llm_custom_url(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(base_url=url)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     llm_client.update_config(base_url=url)
-    await message.answer(f"✅ <b>Эндпоинт сохранён:</b> <code>{url}</code>\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await message.answer(f"✅ <b>Эндпоинт сохранён:</b> <code>{url}</code>\n\n{text}", reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "llm_test_ping")
@@ -1212,12 +1219,12 @@ async def cb_llm_preset_ctx(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(context_limit=ctx_val)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     if companion:
         companion.update_config(context_limit=ctx_val)
 
-    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
     await callback.answer(f"Контекст: {ctx_val} сообщений")
 
 
@@ -1261,12 +1268,12 @@ async def proc_llm_custom_ctx(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(context_limit=val)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     if companion:
         companion.update_config(context_limit=val)
 
-    await message.answer(f"✅ <b>Контекст установлен:</b> <code>{val}</code> сообщ.\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await message.answer(f"✅ <b>Контекст установлен:</b> <code>{val}</code> сообщ.\n\n{text}", reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "llm_select_tokens")
@@ -1305,12 +1312,12 @@ async def cb_llm_preset_tokens(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(max_tokens=tok_val)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     if companion:
         companion.update_config(max_tokens=tok_val)
 
-    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
     await callback.answer(f"Длина: {tok_val} токенов")
 
 
@@ -1354,12 +1361,12 @@ async def proc_llm_custom_tokens(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(max_tokens=val)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     if companion:
         companion.update_config(max_tokens=val)
 
-    await message.answer(f"✅ <b>Лимит длины установлен:</b> <code>{val}</code> токенов\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await message.answer(f"✅ <b>Лимит длины установлен:</b> <code>{val}</code> токенов\n\n{text}", reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "llm_select_temp")
@@ -1395,10 +1402,317 @@ async def cb_llm_preset_temp(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(temperature=temp_val)
-        text, is_on = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     if companion:
         companion.update_config(temperature=temp_val)
 
-    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
     await callback.answer(f"Температура: {temp_val}")
+
+
+
+# ==================== NEW MODERATION & LLM HANDLERS ====================
+
+@router.callback_query(F.data.startswith("mod_autodel_cycle:"))
+async def cb_mod_autodel_cycle(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    cid = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        new_sec = await chat_repo.cycle_delete_warn_seconds(cid)
+    label = f"{new_sec} сек." if new_sec > 0 else "Выключено"
+    await callback.answer(f"Автоудаление предупреждений: {label}")
+    await cb_chat_moderation_view(callback, db, is_admin=is_admin)
+
+
+@router.callback_query(F.data.startswith("mod_automute_cycle:"))
+async def cb_mod_automute_cycle(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    cid = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        new_val = await chat_repo.cycle_auto_mute(cid)
+    label = "Выкл" if new_val == 0 else (f"{new_val//60} мин." if new_val < 3600 else f"{new_val//3600} ч.")
+    await callback.answer(f"Авто-мут при 3 нарушениях: {label}")
+    await cb_chat_moderation_view(callback, db, is_admin=is_admin)
+
+
+@router.callback_query(F.data.startswith("mod_clear_mem:"))
+async def cb_mod_clear_mem(
+    callback: CallbackQuery,
+    db: Database,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    cid = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        await ChatRepository(conn).clear_companion_history(cid)
+    if companion:
+        companion.context_buffer.clear(cid)
+    await callback.answer("Память диалогов для этого чата очищена!", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("mod_wl_menu:"))
+async def cb_mod_wl_menu(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    cid = int(callback.data.split(":")[1])
+    import json
+    async with db.connect() as conn:
+        chat = await ChatRepository(conn).get_chat(cid)
+    raw_wl = chat.get("custom_whitelist_words", "[]") if chat else "[]"
+    try:
+        w_list = json.loads(raw_wl) if isinstance(raw_wl, str) else (raw_wl or [])
+    except Exception:
+        w_list = []
+    lines = [
+        f"⚪ <b>Белый список слов для чата #{cid} (Исключения)</b>\n",
+        "Слова из этого списка бот <b>никогда не будет считать матом</b> в этом чате.\n",
+        f"Текущий белый список: <b>{', '.join(w_list) if w_list else '<i>(пуст)</i>'}</b>",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=mod_whitelist_kb(cid, bool(w_list)), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mod_wl_edit:"))
+async def cb_mod_wl_edit(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    cid = int(callback.data.split(":")[1])
+    await state.set_state(AdminModStates.waiting_for_whitelist_words)
+    await state.update_data(mod_chat_id=cid)
+    text = (
+        f"✏️ <b>Введите белый список слов для чата #{cid}:</b>\n\n"
+        "Отправьте слова через запятую (например: <code>дебил, урод, блин</code>).\n"
+        "Эти слова не будут блокироваться в этом чате."
+    )
+    await callback.message.edit_text(text, reply_markup=llm_cancel_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(AdminModStates.waiting_for_whitelist_words)
+async def proc_mod_whitelist_words(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        return
+    data = await state.get_data()
+    cid = data.get("mod_chat_id")
+    await state.clear()
+    raw = message.text.strip() if message.text else ""
+    words = [w.strip().lower() for w in raw.split(",") if w.strip()]
+    if cid:
+        async with db.connect() as conn:
+            chat_repo = ChatRepository(conn)
+            await chat_repo.set_whitelist_words(cid, words)
+            chat = await chat_repo.get_chat(cid)
+    await message.answer(f"✅ <b>Белый список сохранён ({len(words)} слов)!</b>", reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("mod_wl_clear:"))
+async def cb_mod_wl_clear(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    cid = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        await chat_repo.set_whitelist_words(cid, [])
+        chat = await chat_repo.get_chat(cid)
+    await callback.answer("Белый список очищен!")
+    await cb_chat_moderation_view(callback, db, is_admin=is_admin)
+
+
+@router.callback_query(F.data == "llm_select_persona")
+async def cb_llm_select_persona(callback: CallbackQuery, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    text = (
+        "🎭 <b>Выбор характера и личности Ричарда:</b>\n\n"
+        "• 🎓 <b>Студент-сокурсник</b> — живой, понимает пары, сессии, дружелюбный и отзывчивый\n"
+        "• 💼 <b>Деловой эксперт</b> — вежливый, точный, без лишнего сленга и шуток\n"
+        "• 😈 <b>Дерзкий / Остроумный</b> — черный юмор, сарказм и подколы\n"
+        "• ⚡ <b>Краткий / По делу</b> — 1-2 предложения, максимум сути\n"
+        "• ✍️ <b>Свой промпт</b> — задайте любую свою инструкцию для нейросети\n\n"
+        "Выберите пресет:"
+    )
+    await callback.message.edit_text(text, reply_markup=llm_persona_select_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("llm_set_persona:"))
+async def cb_llm_set_persona(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    persona_code = callback.data.split(":", 1)[1]
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(persona=persona_code)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
+    if companion:
+        companion.update_config(persona=persona_code)
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
+    await callback.answer(f"Характер: {persona_code}")
+
+
+@router.callback_query(F.data == "llm_custom_persona")
+async def cb_llm_custom_persona(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    await state.set_state(AdminLLMStates.waiting_for_custom_persona)
+    text = (
+        "✍️ <b>Ввод пользовательского системного промпта для Ричарда:</b>\n\n"
+        "Отправьте сообщением подробную инструкцию (роль, правила, манера речи)."
+    )
+    await callback.message.edit_text(text, reply_markup=llm_cancel_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(AdminLLMStates.waiting_for_custom_persona)
+async def proc_llm_custom_persona(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        return
+    prompt_text = message.text.strip() if message.text else ""
+    await state.clear()
+    if not prompt_text:
+        await message.answer("❌ Промпт не может быть пустым.", reply_markup=admin_panel_kb())
+        return
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(persona="custom", custom_prompt=prompt_text)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
+    if companion:
+        companion.update_config(persona="custom", custom_prompt=prompt_text)
+    await message.answer(f"✅ <b>Пользовательский характер сохранен!</b>\n\n{text}", reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "llm_select_trigger")
+async def cb_llm_select_trigger(callback: CallbackQuery, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    text = (
+        "🎯 <b>Режим реакции Ричарда в группах:</b>\n\n"
+        "• 🗣️ <b>Только имя и реплай</b> — реагирует на 'Ричард', 'Richard' или ответ на его сообщение\n"
+        "• 📢 <b>Все упоминания</b> — реагирует также на @теги бота\n\n"
+        "Выберите режим:"
+    )
+    await callback.message.edit_text(text, reply_markup=llm_trigger_select_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("llm_set_trigger:"))
+async def cb_llm_set_trigger(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    trig = callback.data.split(":", 1)[1]
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(trigger_mode=trig)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
+    if companion:
+        companion.update_config(trigger_mode=trig)
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
+    await callback.answer(f"Режим триггера: {trig}")
+
+
+@router.callback_query(F.data == "llm_toggle_typing")
+async def cb_llm_toggle_typing(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        curr = await config_repo.get_llm_config()
+        new_val = not curr.get("companion_typing_indicator", True)
+        await config_repo.set_llm_config(typing_indicator=new_val)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
+    if companion:
+        companion.update_config(typing_indicator=new_val)
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
+    label = "ВКЛ" if new_val else "ВЫКЛ"
+    await callback.answer(f"Статус «Печатает...»: {label}")
+
+
+@router.callback_query(F.data == "llm_cycle_random")
+async def cb_llm_cycle_random(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    cycle_map = {0: 3, 3: 5, 5: 10, 10: 0}
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        curr = await config_repo.get_llm_config()
+        c_rand = curr.get("companion_random_reply_chance", 0)
+        new_rand = cycle_map.get(c_rand, 0)
+        await config_repo.set_llm_config(random_reply_chance=new_rand)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
+    if companion:
+        companion.update_config(random_reply_chance=new_rand)
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
+    await callback.answer(f"Шанс случайного ответа: {new_rand}%" if new_rand > 0 else "Случайные ответы выключены")
+
+
+@router.callback_query(F.data == "llm_clear_all_mem")
+async def cb_llm_clear_all_mem(
+    callback: CallbackQuery,
+    db: Database,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+    async with db.connect() as conn:
+        await ChatRepository(conn).clear_all_companion_history()
+    if companion:
+        companion.context_buffer._buffers.clear()
+    await callback.answer("Вся память диалогов Ричарда во всех чатах очищена!", show_alert=True)

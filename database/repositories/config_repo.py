@@ -34,6 +34,11 @@ class ConfigRepository(BaseRepository):
         default_context_limit: int = 15,
         default_max_tokens: int = 800,
         default_temperature: float = 0.7,
+        default_persona: str = "student",
+        default_custom_prompt: str = "",
+        default_trigger_mode: str = "name_and_reply",
+        default_typing_indicator: bool = True,
+        default_random_reply_chance: int = 0,
     ) -> Dict[str, Any]:
         enabled_val = await self.get_value("llm_enabled", "1" if default_enabled else "0")
         api_key_val = await self.get_value("llm_api_key", default_api_key)
@@ -58,6 +63,16 @@ class ConfigRepository(BaseRepository):
         except ValueError:
             temp_flt = default_temperature
 
+        persona_val = await self.get_value("llm_companion_persona", default_persona)
+        custom_prompt_val = await self.get_value("llm_companion_custom_prompt", default_custom_prompt)
+        trigger_val = await self.get_value("llm_companion_trigger_mode", default_trigger_mode)
+        typing_val = await self.get_value("llm_companion_typing", "1" if default_typing_indicator else "0")
+        rand_val = await self.get_value("llm_companion_random_chance", str(default_random_reply_chance))
+        try:
+            rand_int = int(rand_val) if rand_val else 0
+        except ValueError:
+            rand_int = 0
+
         return {
             "llm_enabled": enabled_val == "1",
             "llm_api_key": api_key_val or "",
@@ -66,6 +81,11 @@ class ConfigRepository(BaseRepository):
             "companion_context_limit": ctx_int,
             "companion_max_tokens": tokens_int,
             "companion_temperature": temp_flt,
+            "companion_persona": persona_val or "student",
+            "companion_custom_prompt": custom_prompt_val or "",
+            "companion_trigger_mode": trigger_val or "name_and_reply",
+            "companion_typing_indicator": typing_val == "1",
+            "companion_random_reply_chance": rand_int,
         }
 
     async def set_llm_config(
@@ -77,6 +97,11 @@ class ConfigRepository(BaseRepository):
         context_limit: Optional[int] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        persona: Optional[str] = None,
+        custom_prompt: Optional[str] = None,
+        trigger_mode: Optional[str] = None,
+        typing_indicator: Optional[bool] = None,
+        random_reply_chance: Optional[int] = None,
     ) -> Dict[str, Any]:
         if enabled is not None:
             await self.set_value("llm_enabled", "1" if enabled else "0")
@@ -92,5 +117,15 @@ class ConfigRepository(BaseRepository):
             await self.set_value("llm_max_tokens", str(max_tokens))
         if temperature is not None:
             await self.set_value("llm_temperature", str(temperature))
+        if persona is not None:
+            await self.set_value("llm_companion_persona", persona.strip())
+        if custom_prompt is not None:
+            await self.set_value("llm_companion_custom_prompt", custom_prompt.strip())
+        if trigger_mode is not None:
+            await self.set_value("llm_companion_trigger_mode", trigger_mode.strip())
+        if typing_indicator is not None:
+            await self.set_value("llm_companion_typing", "1" if typing_indicator else "0")
+        if random_reply_chance is not None:
+            await self.set_value("llm_companion_random_chance", str(random_reply_chance))
 
         return await self.get_llm_config()

@@ -94,6 +94,27 @@ CREATE TABLE IF NOT EXISTS app_state (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS companion_chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    user_name TEXT,
+    text TEXT NOT NULL,
+    is_bot BOOLEAN NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_companion_history_chat ON companion_chat_history(chat_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS moderation_violations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    reason TEXT,
+    severity TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_mod_violations_user ON moderation_violations(chat_id, user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     username TEXT,
@@ -136,6 +157,10 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         ("chat_ai_enabled", "BOOLEAN", "0"),
         ("profanity_strictness", "TEXT", "'hard'"),
         ("custom_profanity_words", "TEXT", "'[]'"),
+        ("profanity_delete_warn_seconds", "INTEGER", "0"),
+        ("custom_whitelist_words", "TEXT", "'[]'"),
+        ("auto_mute_duration", "INTEGER", "0"),
+        ("llm_moderation_enabled", "BOOLEAN", "0"),
     ]:
         try:
             await conn.execute(f"ALTER TABLE chats ADD COLUMN {col} {col_type} NOT NULL DEFAULT {default}")

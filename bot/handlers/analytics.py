@@ -63,26 +63,79 @@ async def cb_admin_all_profiles(event: Message | CallbackQuery, db: Database, is
         repo = ProfileRepository(conn)
         profiles = await repo.list_profiles(limit=50)
 
-    lines = ["📊 <b>Анализ стилей общения участников (Админ-обзор)</b>\n"]
+    lines = [
+        "📊 <b>Анализ стилей общения участников (Админ-обзор)</b>",
+        f"👥 Всего сформировано профилей: <b>{len(profiles)}</b>\n",
+    ]
     buttons: List[List[InlineKeyboardButton]] = []
 
     if not profiles:
-        lines.append("Данные стилометрии ещё не накоплены в подключенных чатах.")
+        lines.append("<i>Данные стилометрии ещё не сформированы. Бот анализирует сообщения из групп.</i>")
     else:
-        lines.append("Выберите пользователя для просмотра его детального стиля:\n")
-        for p in profiles:
+        lines.append("Выберите участника для просмотра речевого портрета:\n")
+        bot = event.bot
+        from database.repositories.user_repo import UserRepository
+
+        for idx, p in enumerate(profiles, start=1):
             uid = p["user_id"]
-            owner_mark = " 👑 [Владелец]" if p.get("is_owner") else ""
+            first_name = p.get("first_name") or ""
+            last_name = p.get("last_name") or ""
+            full_name = f"{first_name} {last_name}".strip()
+            uname = f"@{p['username']}" if p.get("username") else ""
+
+            # Try to resolve user name if missing
+            if not full_name and not uname and bot:
+                try:
+                    chat_info = await bot.get_chat(uid)
+                    if chat_info:
+                        full_name = chat_info.full_name or ""
+                        if chat_info.username:
+                            uname = f"@{chat_info.username}"
+                        async with db.connect() as conn:
+                            await UserRepository(conn).upsert_user(
+                                user_id=uid,
+                                username=chat_info.username,
+                                first_name=chat_info.first_name,
+                                last_name=chat_info.last_name,
+                            )
+                except Exception:
+                    pass
+
+            is_owner = bool(p.get("is_owner"))
+            role_icon = "👑" if is_owner else "👤"
+            owner_badge = " <b>[Владелец]</b>" if is_owner else ""
+
+            if full_name and uname:
+                name_header = f"<b>{full_name}</b> ({uname})"
+                btn_name = full_name
+            elif full_name:
+                name_header = f"<b>{full_name}</b>"
+                btn_name = full_name
+            elif uname:
+                name_header = f"<b>{uname}</b>"
+                btn_name = uname
+            else:
+                name_header = f"ID: <code>{uid}</code>"
+                btn_name = f"ID {uid}"
+
+            samples = p.get("sample_count", 0)
+            avg_len = p.get("avg_sentence_len", 0.0)
+
             lines.append(
-                f"• ID: <code>{uid}</code>{owner_mark} — "
-                f"Сообщений: <b>{p['sample_count']}</b>, "
-                f"Слов/предл: <b>{p.get('avg_sentence_len', 0):.1f}</b>"
+                f"{idx}. {role_icon} {name_header}{owner_badge}\n"
+                f"    └ ID: <code>{uid}</code> • Сообщений: <b>{samples}</b> • Слов/предл: <b>{avg_len:.1f}</b>"
             )
-            btn_label = f"{'👑' if p.get('is_owner') else '👤'} ID {uid} ({p['sample_count']} сообщ.)"
+
+            # Clean button text
+            short_name = btn_name if len(btn_name) <= 18 else btn_name[:17] + "…"
+            btn_label = f"{role_icon} {short_name} ({samples})"
             buttons.append([InlineKeyboardButton(text=btn_label, callback_data=f"view_profile:{uid}")])
 
     buttons.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_all_profiles"),
         InlineKeyboardButton(text="📊 Мой личный стиль", callback_data="nav_analytics"),
+    ])
+    buttons.append([
         InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin"),
     ])
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -111,7 +164,20 @@ async def cb_admin_view_profile(callback: CallbackQuery, db: Database, settings:
         return
 
     is_owner = bool(settings.OWNER_ID > 0 and target_uid == settings.OWNER_ID)
-    label = f"Пользователь ID {target_uid}" + (" 👑 [Владелец]" if is_owner else "")
+    fn = profile.get("first_name") or ""
+    ln = profile.get("last_name") or ""
+    full_name = f"{fn} {ln}".strip()
+    un = f"@{profile['username']}" if profile.get("username") else ""
+    if full_name and un:
+        u_display = f"{full_name} ({un})"
+    elif full_name:
+        u_display = full_name
+    elif un:
+        u_display = un
+    else:
+        u_display = f"ID {target_uid}"
+
+    label = f"{u_display} [ID: {target_uid}]" + (" 👑 [Владелец]" if is_owner else "")
     report_html = ReportGenerator.generate_profile_report(profile, user_label=label)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[

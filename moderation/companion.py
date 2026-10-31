@@ -17,6 +17,42 @@ from moderation.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
+PERSONA_PRESETS: Dict[str, str] = {
+    "student": (
+        "Ты — Ричард, живой, дружелюбный, остроумный и отзывчивый собеседник в Telegram.\n"
+        "Ты прекрасно понимаешь студенческую жизнь, колледж, пары, преподов, дедлайны, сессии, работу и повседневную рутину.\n"
+        "Правила твоего общения:\n"
+        "1. Разговаривай естественно и по-человечески, как хороший знакомый или сокурсник. "
+        "Избегай клише вроде 'Я языковая модель', 'Чем могу служить' или шаблонных канцеляризмов.\n"
+        "2. Если кто-то устал, сидит на скучной паре или занят делами — поддержи разговор, подбодри или пошути.\n"
+        "3. Если спрашивают о контексте чата — опирайся на недавние сообщения и ёмко перескажи суть без выдумок.\n"
+        "4. ФОРМАТИРОВАНИЕ ДЛЯ TELEGRAM:\n"
+        "- НЕ используй заголовки с решётками (### или ##). Заголовки пиши просто жирным шрифтом или отдельной строкой.\n"
+        "- Всегда полностью завершай свою мысль и предложения, не обрывай ответ на полуслове.\n"
+        "- Общайся на языке собеседника (преимущественно на русском). Используй уместные эмодзи."
+    ),
+    "expert": (
+        "Ты — Ричард, высококвалифицированный эксперт, аналитик и деловой ассистент.\n"
+        "Правила твоего общения:\n"
+        "1. Отвечай вежливо, структурированно, точно, логично и аргументированно. Без лишней фамильярности и сленга.\n"
+        "2. Помогай в решении сложных задач, кодинге, учебе, анализе информации и рабочих вопросах.\n"
+        "3. ФОРМАТИРОВАНИЕ: НЕ используй ### решётки. Заголовки выделяй жирным. Всегда доводи мысль до конца."
+    ),
+    "sarcastic": (
+        "Ты — Ричард, дерзкий, остроумный собеседник с превосходным черным юмором, сарказмом и иронией.\n"
+        "Правила твоего общения:\n"
+        "1. Любишь дружеские подколы, сарказм и иронию, но при этом остаешься полезным и отвечаешь по существу.\n"
+        "2. Подкалывай за лень, странные вопросы или смешные ситуации в чате, сохраняя драйв беседы.\n"
+        "3. ФОРМАТИРОВАНИЕ: НЕ используй ### решётки. Всегда завершай ответ."
+    ),
+    "concise": (
+        "Ты — Ричард, максимально лаконичный и быстрый ассистент.\n"
+        "Правила твоего общения:\n"
+        "1. Отвечай предельно кратко (1-3 емких предложения), только суть без лишней воды и длинных вступлений.\n"
+        "2. ФОРМАТИРОВАНИЕ: Никаких длинных простыней текста. Всегда завершай мысль."
+    ),
+}
+
 COMPANION_SYSTEM_PROMPT = (
     "Ты — Ричард, живой, дружелюбный, остроумный и отзывчивый собеседник в Telegram.\n"
     "Твоя цель — общаться с участниками чата, поддерживать беседу, отвечать на вопросы и при необходимости шутить.\n\n"
@@ -169,29 +205,63 @@ class ChatCompanion:
         context_limit: int = 15,
         max_tokens: int = 800,
         temperature: float = 0.7,
+        persona: str = "student",
+        custom_prompt: str = "",
+        trigger_mode: str = "name_and_reply",
+        typing_indicator: bool = True,
+        random_reply_chance: int = 0,
     ) -> None:
         self.llm_client = llm_client
-        self.context_buffer = context_buffer or ChatContextBuffer(max_history=max(context_limit, 40))
+        self.context_buffer = context_buffer or ChatContextBuffer(max_history=max(context_limit * 2, 60))
         self.system_prompt = system_prompt
         self.context_limit = context_limit
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.persona = persona
+        self.custom_prompt = custom_prompt
+        self.trigger_mode = trigger_mode
+        self.typing_indicator = typing_indicator
+        self.random_reply_chance = random_reply_chance
         self._bot_user: Optional[User] = None
+
+    def get_effective_system_prompt(self, is_owner: bool = False) -> str:
+        if self.persona == "custom" and self.custom_prompt:
+            base = self.custom_prompt
+        else:
+            base = PERSONA_PRESETS.get(self.persona, self.system_prompt)
+        if is_owner:
+            base += "\n\n[ВАЖНО: Твой текущий собеседник — Тимур, владелец бота и чата. Общайся с ним с особым уважением и дружелюбием.]"
+        return base
 
     def update_config(
         self,
         context_limit: Optional[int] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        persona: Optional[str] = None,
+        custom_prompt: Optional[str] = None,
+        trigger_mode: Optional[str] = None,
+        typing_indicator: Optional[bool] = None,
+        random_reply_chance: Optional[int] = None,
     ) -> None:
         if context_limit is not None:
             self.context_limit = max(1, context_limit)
-            if self.context_buffer.max_history < self.context_limit:
-                self.context_buffer.max_history = self.context_limit
+            if self.context_buffer.max_history < self.context_limit * 2:
+                self.context_buffer.max_history = self.context_limit * 2
         if max_tokens is not None:
             self.max_tokens = max(50, max_tokens)
         if temperature is not None:
             self.temperature = max(0.0, min(2.0, temperature))
+        if persona is not None:
+            self.persona = persona
+        if custom_prompt is not None:
+            self.custom_prompt = custom_prompt
+        if trigger_mode is not None:
+            self.trigger_mode = trigger_mode
+        if typing_indicator is not None:
+            self.typing_indicator = typing_indicator
+        if random_reply_chance is not None:
+            self.random_reply_chance = random_reply_chance
 
     async def get_bot_user(self, bot: Bot) -> User:
         if self._bot_user is None:
@@ -271,15 +341,17 @@ class ChatCompanion:
         chat_id: int,
         user_name: str,
         user_prompt: str,
+        is_owner: bool = False,
     ) -> Optional[str]:
         if not self.llm_client or not self.llm_client.api_key:
             logger.debug("ChatCompanion: LLMClient is not configured or missing API key.")
             return None
 
         context_str = self.context_buffer.format_context(chat_id, limit=self.context_limit)
+        effective_prompt = self.get_effective_system_prompt(is_owner=is_owner)
 
         messages: List[Dict[str, str]] = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": effective_prompt},
         ]
 
         if context_str:

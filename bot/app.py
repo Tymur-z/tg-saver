@@ -130,6 +130,11 @@ async def start_application(settings: Settings) -> None:
         context_limit=llm_conf.get("companion_context_limit", 15),
         max_tokens=llm_conf.get("companion_max_tokens", 800),
         temperature=llm_conf.get("companion_temperature", 0.7),
+        persona=llm_conf.get("companion_persona", "student"),
+        custom_prompt=llm_conf.get("companion_custom_prompt", ""),
+        trigger_mode=llm_conf.get("companion_trigger_mode", "name_and_reply"),
+        typing_indicator=llm_conf.get("companion_typing_indicator", True),
+        random_reply_chance=llm_conf.get("companion_random_reply_chance", 0),
     )
 
     dp = create_dispatcher(

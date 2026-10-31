@@ -509,3 +509,36 @@ def llm_temp_select_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
         ]
     )
+
+
+def mod_whitelist_kb(cid: int, has_words: bool) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="✏️ Задать / Изменить белый список", callback_data=f"mod_wl_edit:{cid}")],
+    ]
+    if has_words:
+        buttons.append([InlineKeyboardButton(text="🗑️ Очистить белый список", callback_data=f"mod_wl_clear:{cid}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам чата", callback_data=f"mod_chat_view:{cid}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def llm_persona_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎓 Студент-сокурсник (по умолч.)", callback_data="llm_set_persona:student")],
+            [InlineKeyboardButton(text="💼 Деловой эксперт", callback_data="llm_set_persona:expert")],
+            [InlineKeyboardButton(text="😈 Дерзкий / Остроумный", callback_data="llm_set_persona:sarcastic")],
+            [InlineKeyboardButton(text="⚡ Краткий / По делу", callback_data="llm_set_persona:concise")],
+            [InlineKeyboardButton(text="✍️ Задать свой системный промпт", callback_data="llm_custom_persona")],
+            [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
+        ]
+    )
+
+
+def llm_trigger_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗣️ Только имя («Ричард») и реплай", callback_data="llm_set_trigger:name_and_reply")],
+            [InlineKeyboardButton(text="📢 Все упоминания (@RichardHelperBot + имя + реплай)", callback_data="llm_set_trigger:all")],
+            [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
+        ]
+    )
