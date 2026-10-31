@@ -108,7 +108,7 @@ async def cmd_help(message: Message, is_admin: bool = False) -> None:
 
 @router.message(Command("admin"))
 @router.callback_query(F.data == "nav_admin")
-async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings: Settings, is_admin: bool = False) -> None:
+async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings: Settings, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin:
         if isinstance(event, CallbackQuery):
             await event.answer("⛔ Доступ разрешён только администраторам.", show_alert=True)
@@ -129,19 +129,29 @@ async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings
     pw_status = "🟢 Включен" if pw_req else "⚪ Отключен"
     div = "━━━━━━━━━━━━━━━━━━━━━━"
 
-    text = (
-        f"👑 <b>Панель Супер-Администратора</b>\n{div}\n"
-        f"• 👥 <b>Пользователей в системе:</b> <code>{users_cnt}</code>\n"
-        f"• 🔀 <b>Всего маршрутов:</b> <code>{routes_cnt}</code> <i>(все авторы)</i>\n"
-        f"• 📡 <b>Подключенных чатов:</b> <code>{chats_cnt}</code>\n"
-        f"• 🔑 <b>Пароль доступа:</b> {pw_status}\n{div}\n"
-        "👇 <i>Выберите нужный раздел для управления:</i>"
-    )
-
-    if isinstance(event, Message):
-        await event.answer(text, reply_markup=admin_panel_kb(), parse_mode="HTML")
+    if is_subadmin:
+        text = (
+            f"🛡️ <b>Панель Младшего Администратора</b>\n{div}\n"
+            f"• 👥 <b>Пользователей в системе:</b> <code>{users_cnt}</code>\n"
+            f"• 🔀 <b>Доступных маршрутов:</b> <code>{routes_cnt}</code>\n"
+            f"• 📡 <b>Подключенных чатов:</b> <code>{chats_cnt}</code>\n{div}\n"
+            "👇 <i>Вам доступно управление чатами, модерацией, ИИ и аналитикой:</i>"
+        )
     else:
-        await event.message.edit_text(text, reply_markup=admin_panel_kb(), parse_mode="HTML")
+        text = (
+            f"👑 <b>Панель Администратора</b>\n{div}\n"
+            f"• 👥 <b>Пользователей в системе:</b> <code>{users_cnt}</code>\n"
+            f"• 🔀 <b>Всего маршрутов:</b> <code>{routes_cnt}</code> <i>(все авторы)</i>\n"
+            f"• 📡 <b>Подключенных чатов:</b> <code>{chats_cnt}</code>\n"
+            f"• 🔑 <b>Пароль доступа:</b> {pw_status}\n{div}\n"
+            "👇 <i>Выберите нужный раздел для управления:</i>"
+        )
+
+    kb = admin_panel_kb(is_subadmin=is_subadmin)
+    if isinstance(event, Message):
+        await event.answer(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         await event.answer()
 
 
@@ -205,7 +215,7 @@ async def cb_user_view(callback: CallbackQuery, db: Database, is_admin: bool = F
     is_self = (target_id == caller_id)
     await callback.message.edit_text(
         text,
-        reply_markup=user_card_kb(target, is_owner=is_owner_target, is_self=is_self),
+        reply_markup=user_card_kb(target, is_owner=is_owner_target, is_self=is_self, is_subadmin=is_subadmin),
         parse_mode="HTML",
     )
 
@@ -218,6 +228,13 @@ async def cb_user_block(callback: CallbackQuery, db: Database, settings: Setting
     if target_id == settings.OWNER_ID or target_id == callback.from_user.id:
         await callback.answer("⛔ Нельзя заблокировать главного владельца или самого себя!", show_alert=True)
         return
+
+    if is_subadmin:
+        async with db.connect() as conn:
+            target_u = await UserRepository(conn).get_user(target_id)
+        if target_u and target_u.get("role") in ("owner", "admin", "subadmin"):
+            await callback.answer("⛔ Младший администратор не может блокировать администрацию!", show_alert=True)
+            return
     async with db.connect() as conn:
         user_repo = UserRepository(conn)
         await user_repo.set_blocked(target_id, True)
@@ -240,8 +257,9 @@ async def cb_user_unblock(callback: CallbackQuery, db: Database, is_admin: bool 
 
 
 @router.callback_query(F.data.startswith("user_role:"))
-async def cb_user_role(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
-    if not is_admin:
+async def cb_user_role(callback: CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        await callback.answer("⛔ Изменение ролей доступно только старшему администратору.", show_alert=True)
         return
     parts = callback.data.split(":")
     target_id = int(parts[1])
@@ -273,7 +291,7 @@ async def cb_user_reset_auth(callback: CallbackQuery, db: Database, settings: Se
 
 @router.message(Command("all_routes"))
 @router.callback_query(F.data == "admin_all_routes")
-async def cmd_admin_all_routes(event: Message | CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cmd_admin_all_routes(event: Message | CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin:
         return
 
@@ -327,8 +345,11 @@ async def cmd_admin_all_chats(event: Message | CallbackQuery, db: Database, is_a
 
 @router.message(Command("password"))
 @router.callback_query(F.data == "admin_password")
-async def cmd_admin_password(event: Message | CallbackQuery, db: Database, settings: Settings, is_admin: bool = False) -> None:
-    if not is_admin:
+async def cmd_admin_password(event: Message | CallbackQuery, db: Database, settings: Settings, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        if isinstance(event, CallbackQuery):
+            await event.answer("⛔ Управление паролем доступа доступно только главному администратору.", show_alert=True)
+        return
         return
 
     async with db.connect() as conn:
@@ -354,8 +375,10 @@ async def cmd_admin_password(event: Message | CallbackQuery, db: Database, setti
 
 
 @router.callback_query(F.data == "admin_toggle_pw_req")
-async def cb_admin_toggle_pw_req(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False) -> None:
-    if not is_admin:
+async def cb_admin_toggle_pw_req(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        await callback.answer("⛔ Доступ разрешён только главному администратору.", show_alert=True)
+        return
         return
     await callback.answer()
 
@@ -657,14 +680,27 @@ async def _render_llm_settings(conn, settings: Settings) -> tuple[str, bool, dic
     rand_chance = conf.get("companion_random_reply_chance", 0)
     rand_str = "Выключено" if rand_chance == 0 else f"{rand_chance}%"
 
-    lines = [
-        "🤖 <b>Панель управления ИИ (Ричард & LLM)</b>",
-        div,
-        f"• ⚡ <b>Статус ИИ:</b> {status_str}",
-        f"• 🧠 <b>Модель:</b> <code>{conf['llm_model']}</code>",
-        f"• 🌐 <b>Эндпоинт (URL/IP):</b> <code>{conf['llm_base_url']}</code>",
-        f"• 🔑 <b>API-ключ:</b> {key_masked}",
-        div,
+    if is_subadmin:
+        top_lines = [
+            "🤖 <b>Панель управления ИИ (Ричард)</b>",
+            div,
+            f"• ⚡ <b>Статус ИИ:</b> {status_str}",
+            f"• 🧠 <b>Модель:</b> <code>{conf['llm_model']}</code>",
+            "• 🌐 <b>Сервер нейросети:</b> 🟢 Подключен",
+            div,
+        ]
+    else:
+        top_lines = [
+            "🤖 <b>Панель управления ИИ (Ричард & LLM)</b>",
+            div,
+            f"• ⚡ <b>Статус ИИ:</b> {status_str}",
+            f"• 🧠 <b>Модель:</b> <code>{conf['llm_model']}</code>",
+            f"• 🌐 <b>Эндпоинт (URL/IP):</b> <code>{conf['llm_base_url']}</code>",
+            f"• 🔑 <b>API-ключ:</b> {key_masked}",
+            div,
+        ]
+
+    lines = top_lines + [
         "⚙️ <b>Параметры генерации и памяти:</b>",
         f"• 📚 <b>Контекст чата:</b> <code>{ctx}</code> недавних сообщ.",
         f"• 📝 <b>Длина ответа:</b> <code>{toks}</code> токенов",
@@ -686,6 +722,7 @@ async def cmd_admin_llm_settings(
     db: Database,
     settings: Settings,
     is_admin: bool = False,
+    is_subadmin: bool = False,
     state: Optional[FSMContext] = None,
 ) -> None:
     if not is_admin:
@@ -697,9 +734,9 @@ async def cmd_admin_llm_settings(
         await state.clear()
 
     async with db.connect() as conn:
-        text, is_on, conf = await _render_llm_settings(conn, settings)
+        text, is_on, conf = await _render_llm_settings(conn, settings, is_subadmin=is_subadmin)
 
-    kb = llm_settings_kb(is_on, conf)
+    kb = llm_settings_kb(is_on, conf, is_subadmin=is_subadmin)
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         await event.answer()
@@ -733,8 +770,10 @@ async def cb_llm_toggle_enabled(
 
 
 @router.callback_query(F.data == "llm_set_key")
-async def cb_llm_set_key(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
-    if not is_admin:
+async def cb_llm_set_key(callback: CallbackQuery, state: FSMContext, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        await callback.answer("⛔ Доступ к API-ключам разрешён только старшему администратору.", show_alert=True)
+        return
         await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
         return
 
@@ -862,8 +901,10 @@ async def proc_admin_llm_custom_model(
 
 
 @router.callback_query(F.data == "llm_select_url")
-async def cb_llm_select_url(callback: CallbackQuery, is_admin: bool = False) -> None:
-    if not is_admin:
+async def cb_llm_select_url(callback: CallbackQuery, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        await callback.answer("⛔ Доступ к эндпоинтам серверов разрешён только старшему администратору.", show_alert=True)
+        return
         await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
         return
 

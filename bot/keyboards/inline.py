@@ -16,7 +16,7 @@ MEDIA_TYPE_LABELS = {
 }
 
 
-def main_menu_kb(is_admin: bool = False) -> InlineKeyboardMarkup:
+def main_menu_kb(is_admin: bool = False, is_subadmin: bool = False) -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(text="🔀 Мои маршруты", callback_data="nav_routes"),
@@ -33,14 +33,37 @@ def main_menu_kb(is_admin: bool = False) -> InlineKeyboardMarkup:
     ]
 
     if is_admin:
+        admin_label = "🛡️ Админ-Панель (Модерация)" if is_subadmin else "👑 Админ-Панель (Управление)"
         buttons.append([
-            InlineKeyboardButton(text="👑 Админ-Панель (Управление)", callback_data="nav_admin"),
+            InlineKeyboardButton(text=admin_label, callback_data="nav_admin"),
         ])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def admin_panel_kb() -> InlineKeyboardMarkup:
+def admin_panel_kb(is_subadmin: bool = False) -> InlineKeyboardMarkup:
+    if is_subadmin:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="👥 Пользователи (Аккаунты)", callback_data="admin_users"),
+                    InlineKeyboardButton(text="🌐 Все маршруты системы", callback_data="admin_all_routes"),
+                ],
+                [
+                    InlineKeyboardButton(text="📡 Все чаты бота", callback_data="admin_all_chats"),
+                    InlineKeyboardButton(text="🛡️ Модерация и чаты", callback_data="admin_moderation_chats"),
+                ],
+                [
+                    InlineKeyboardButton(text="🤖 Настройки ИИ (LLM)", callback_data="admin_llm_settings"),
+                    InlineKeyboardButton(text="📊 Стили участников", callback_data="admin_all_profiles"),
+                ],
+                [
+                    InlineKeyboardButton(text="⚙️ Статус и пауза", callback_data="nav_status"),
+                    InlineKeyboardButton(text="⬅️ В главное меню", callback_data="nav_main"),
+                ],
+            ]
+        )
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -69,11 +92,20 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
 def users_list_kb(users: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
     buttons: List[List[InlineKeyboardButton]] = []
     for u in users:
-        role_icon = "👑" if u.get("role") in ("owner", "admin") else "👤"
+        role = u.get("role", "user")
+        if role == "owner":
+            role_icon = "👑"
+        elif role == "admin":
+            role_icon = "⭐"
+        elif role == "subadmin":
+            role_icon = "🛡️"
+        else:
+            role_icon = "👤"
+
         status_icon = "🚫" if u.get("is_blocked") else ("🟢" if u.get("is_authorized") else "🔒")
         name = u.get("first_name") or f"ID {u['user_id']}"
         routes_cnt = u.get("routes_count", 0)
-        btn_text = f"{status_icon} {role_icon} {name[:16]} ({routes_cnt} маршр.)"
+        btn_text = f"{status_icon} {role_icon} {name[:14]} ({routes_cnt} маршр.)"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"user_view:{u['user_id']}")])
 
     buttons.append([
@@ -83,7 +115,12 @@ def users_list_kb(users: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def user_card_kb(target_user: Dict[str, Any], is_owner: bool = False, is_self: bool = False) -> InlineKeyboardMarkup:
+def user_card_kb(
+    target_user: Dict[str, Any],
+    is_owner: bool = False,
+    is_self: bool = False,
+    is_subadmin: bool = False,
+) -> InlineKeyboardMarkup:
     uid = target_user["user_id"]
     is_blocked = bool(target_user.get("is_blocked"))
     role = target_user.get("role", "user")
@@ -93,16 +130,37 @@ def user_card_kb(target_user: Dict[str, Any], is_owner: bool = False, is_self: b
     # Owner or self cannot be blocked or reset
     if is_owner or is_self or role == "owner":
         buttons.append([InlineKeyboardButton(text="👑 Главный владелец (Защищён)", callback_data="noop")])
+    elif is_subadmin:
+        # Subadmin cannot block admins or change roles
+        if role in ("admin", "subadmin"):
+            buttons.append([InlineKeyboardButton(text="🛡️ Администрация системы (Защищён)", callback_data="noop")])
+        else:
+            if is_blocked:
+                buttons.append([InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data=f"user_unblock:{uid}")])
+            else:
+                buttons.append([InlineKeyboardButton(text="🚫 Заблокировать аккаунт", callback_data=f"user_block:{uid}")])
     else:
+        # Full admin / owner:
         if is_blocked:
             buttons.append([InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data=f"user_unblock:{uid}")])
         else:
             buttons.append([InlineKeyboardButton(text="🚫 Заблокировать аккаунт", callback_data=f"user_block:{uid}")])
 
-        if role == "admin":
-            buttons.append([InlineKeyboardButton(text="👤 Снять права администратора", callback_data=f"user_role:{uid}:user")])
-        elif role == "user":
-            buttons.append([InlineKeyboardButton(text="👑 Назначить администратором", callback_data=f"user_role:{uid}:admin")])
+        if role == "user":
+            buttons.append([
+                InlineKeyboardButton(text="🛡️ Сделать младшим админом", callback_data=f"user_role:{uid}:subadmin"),
+                InlineKeyboardButton(text="👑 Сделать администратором", callback_data=f"user_role:{uid}:admin"),
+            ])
+        elif role == "subadmin":
+            buttons.append([
+                InlineKeyboardButton(text="👑 Повысить до администратора", callback_data=f"user_role:{uid}:admin"),
+                InlineKeyboardButton(text="👤 Понизить до пользователя", callback_data=f"user_role:{uid}:user"),
+            ])
+        elif role == "admin":
+            buttons.append([
+                InlineKeyboardButton(text="🛡️ Перевести в младшие админы", callback_data=f"user_role:{uid}:subadmin"),
+                InlineKeyboardButton(text="👤 Снять права администратора", callback_data=f"user_role:{uid}:user"),
+            ])
 
         buttons.append([
             InlineKeyboardButton(text="🔑 Сбросить авторизацию (потребует пароль)", callback_data=f"user_reset_auth:{uid}")
@@ -401,7 +459,7 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
     )
 
 
-def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None) -> InlineKeyboardMarkup:
+def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None, is_subadmin: bool = False) -> InlineKeyboardMarkup:
     conf = conf or {}
     toggle_text = "🟢 ИИ: ВКЛЮЧЕН (нажмите для откл.)" if is_enabled else "⚪ ИИ: ОТКЛЮЧЕН (нажмите для вкл.)"
 
@@ -428,8 +486,16 @@ def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None) -> 
     rand_chance = conf.get("companion_random_reply_chance", 0)
     rand_text = f"💬 Инициатива: {rand_chance}%" if rand_chance > 0 else "💬 Инициатива: Выкл"
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    if is_subadmin:
+        llm_top_rows = [
+            [InlineKeyboardButton(text=toggle_text, callback_data="llm_toggle_enabled")],
+            [
+                InlineKeyboardButton(text="🧠 Выбрать модель", callback_data="llm_select_model"),
+                InlineKeyboardButton(text="🧪 Проверить связь", callback_data="llm_test_ping"),
+            ],
+        ]
+    else:
+        llm_top_rows = [
             [InlineKeyboardButton(text=toggle_text, callback_data="llm_toggle_enabled")],
             [
                 InlineKeyboardButton(text="🔑 Задать API-ключ", callback_data="llm_set_key"),
@@ -439,6 +505,10 @@ def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None) -> 
                 InlineKeyboardButton(text="🌐 Base URL / IP", callback_data="llm_select_url"),
                 InlineKeyboardButton(text="🧪 Проверить связь", callback_data="llm_test_ping"),
             ],
+        ]
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=llm_top_rows + [
             [
                 InlineKeyboardButton(text=f"📚 Контекст: {ctx} сообщ.", callback_data="llm_select_context"),
                 InlineKeyboardButton(text=f"📝 Ответ: {toks} tok", callback_data="llm_select_tokens"),

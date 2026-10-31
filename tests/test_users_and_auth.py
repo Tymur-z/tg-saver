@@ -92,3 +92,50 @@ async def test_user_route_isolation(test_db: Database):
 
         all_routes = await route_repo.list_routes(user_id=None)
         assert len(all_routes) == 2
+
+
+@pytest.mark.asyncio
+async def test_subadmin_role_and_ui_isolation(test_db: Database):
+    from bot.keyboards.inline import admin_panel_kb, llm_settings_kb, user_card_kb
+
+    async with test_db.connect() as conn:
+        repo = UserRepository(conn)
+        user = await repo.upsert_user(user_id=777, username="sub_admin_user", role="user")
+        assert user["role"] == "user"
+
+        await repo.set_role(777, "subadmin")
+        u = await repo.get_user(777)
+        assert u["role"] == "subadmin"
+
+    # 1. Admin panel isolation
+    kb_sub = admin_panel_kb(is_subadmin=True)
+    sub_callbacks = [btn.callback_data for row in kb_sub.inline_keyboard for btn in row]
+    assert "admin_hidden_routes" not in sub_callbacks
+    assert "admin_password" not in sub_callbacks
+    assert "admin_moderation_chats" in sub_callbacks
+    assert "admin_llm_settings" in sub_callbacks
+
+    # 2. LLM settings isolation (hide API key and Base URL)
+    llm_kb_sub = llm_settings_kb(is_enabled=True, conf={}, is_subadmin=True)
+    sub_llm_cbs = [btn.callback_data for row in llm_kb_sub.inline_keyboard for btn in row]
+    assert "llm_set_key" not in sub_llm_cbs
+    assert "llm_select_url" not in sub_llm_cbs
+    assert "llm_select_model" in sub_llm_cbs
+    assert "llm_select_persona" in sub_llm_cbs
+
+    llm_kb_full = llm_settings_kb(is_enabled=True, conf={}, is_subadmin=False)
+    full_llm_cbs = [btn.callback_data for row in llm_kb_full.inline_keyboard for btn in row]
+    assert "llm_set_key" in full_llm_cbs
+    assert "llm_select_url" in full_llm_cbs
+
+    # 3. User card protection (subadmin cannot block admins or change roles)
+    card_sub_viewing_admin = user_card_kb({"user_id": 999, "role": "admin"}, is_subadmin=True)
+    sub_view_cbs = [btn.callback_data for row in card_sub_viewing_admin.inline_keyboard for btn in row]
+    assert "user_block:999" not in sub_view_cbs
+    assert "user_reset_auth:999" not in sub_view_cbs
+    assert "noop" in sub_view_cbs
+
+    card_full_viewing_user = user_card_kb({"user_id": 555, "role": "user"}, is_subadmin=False)
+    full_view_cbs = [btn.callback_data for row in card_full_viewing_user.inline_keyboard for btn in row]
+    assert "user_role:555:subadmin" in full_view_cbs
+    assert "user_role:555:admin" in full_view_cbs

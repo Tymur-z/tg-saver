@@ -78,6 +78,8 @@ class UserAuthMiddleware(BaseMiddleware):
                 )
             data["user_role"] = "owner"
             data["is_admin"] = True
+            data["is_subadmin"] = False
+            data["is_full_admin"] = True
             data["is_owner"] = True
             return await handler(event, data)
 
@@ -149,7 +151,9 @@ class UserAuthMiddleware(BaseMiddleware):
                 return None
 
         role = db_user.get("role", "user") if db_user else "user"
-        is_admin = role in ("admin", "owner") or (user_id in self.settings.admin_id_list)
+        is_subadmin = (role == "subadmin")
+        is_full_admin = (role in ("admin", "owner")) or (user_id in self.settings.admin_id_list)
+        is_admin = is_full_admin or is_subadmin
 
         async with self.db.connect() as conn:
             user_repo = UserRepository(conn)
@@ -164,6 +168,8 @@ class UserAuthMiddleware(BaseMiddleware):
 
         data["user_role"] = role
         data["is_admin"] = is_admin
+        data["is_subadmin"] = is_subadmin
+        data["is_full_admin"] = is_full_admin
         data["is_owner"] = False
 
         return await handler(event, data)

@@ -94,7 +94,7 @@ class UserRepository(BaseRepository):
         )
 
     async def set_role(self, user_id: int, role: str) -> None:
-        valid_roles = {"owner", "admin", "user", "guest"}
+        valid_roles = {"owner", "admin", "subadmin", "user", "guest"}
         if role not in valid_roles:
             raise ValueError(f"Invalid role: {role}")
         await self.execute(
