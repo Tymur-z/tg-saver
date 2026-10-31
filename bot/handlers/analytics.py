@@ -76,8 +76,14 @@ async def cb_admin_all_profiles(event: Message | CallbackQuery, db: Database, is
         bot = event.bot
         from database.repositories.user_repo import UserRepository
 
-        for idx, p in enumerate(profiles, start=1):
+        TELEGRAM_SYSTEM_BOT_IDS = {1087968824, 777000, 136817688}
+        display_idx = 1
+        for p in profiles:
             uid = p["user_id"]
+            if uid in TELEGRAM_SYSTEM_BOT_IDS:
+                continue
+            idx = display_idx
+            display_idx += 1
             first_name = p.get("first_name") or ""
             last_name = p.get("last_name") or ""
             full_name = f"{first_name} {last_name}".strip()

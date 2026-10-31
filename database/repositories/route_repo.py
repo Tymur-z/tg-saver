@@ -90,7 +90,8 @@ class RouteRepository(BaseRepository):
         self,
         user_id: Optional[int] = None,
         active_only: bool = False,
-        ) -> List[Dict[str, Any]]:
+        is_owner: bool = False,
+    ) -> List[Dict[str, Any]]:
         sql = """
             SELECT r.*,
                    sc.title AS source_title,
@@ -104,9 +105,15 @@ class RouteRepository(BaseRepository):
             WHERE 1=1
         """
         params: List[Any] = []
-        if user_id is not None and user_id > 0:
-            sql += " AND r.created_by_user_id = ?"
-            params.append(user_id)
+        if user_id is not None:
+            if is_owner and user_id > 0:
+                sql += " AND (r.created_by_user_id = ? OR r.created_by_user_id = 0)"
+                params.append(user_id)
+            elif user_id > 0:
+                sql += " AND r.created_by_user_id = ?"
+                params.append(user_id)
+            else:
+                sql += " AND r.created_by_user_id = -1" 
 
         if active_only:
             sql += " AND r.is_active = 1"

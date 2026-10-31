@@ -72,7 +72,7 @@ class ProfileRepository(BaseRepository):
 
     async def list_profiles(self, limit: int = 50) -> List[Dict[str, Any]]:
         rows = await self.fetch_all(
-            "SELECT p.*, u.username, u.first_name, u.last_name, u.role FROM user_style_profiles p LEFT JOIN users u ON p.user_id = u.user_id WHERE p.chat_id = 0 ORDER BY p.sample_count DESC LIMIT ?",
+            "SELECT p.*, u.username, u.first_name, u.last_name, u.role FROM user_style_profiles p LEFT JOIN users u ON p.user_id = u.user_id WHERE p.chat_id = 0 AND p.user_id NOT IN (1087968824, 777000, 136817688) ORDER BY p.sample_count DESC LIMIT ?",
             (limit,),
         )
         return [self._format_profile(dict(r)) for r in rows]

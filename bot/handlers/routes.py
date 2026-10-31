@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
+from config.settings import Settings
 from database.connection import Database
 from database.repositories.chat_repo import ChatRepository
 from database.repositories.route_repo import RouteRepository
@@ -103,25 +104,34 @@ def render_route_card(route: Dict[str, Any]) -> str:
 
 @router.message(Command("routes"))
 @router.callback_query(F.data == "nav_routes")
-async def cmd_routes(event: Message | CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cmd_routes(
+    event: Message | CallbackQuery,
+    db: Database,
+    settings: Settings,
+    is_admin: bool = False,
+    is_subadmin: bool = False,
+) -> None:
     user_id = event.from_user.id if event.from_user else 0
+    is_owner = bool(settings.OWNER_ID > 0 and user_id == settings.OWNER_ID)
     async with db.connect() as conn:
         repo = RouteRepository(conn)
-        routes = await repo.list_routes(user_id=None if is_admin else user_id)
+        routes = await repo.list_routes(user_id=user_id, is_owner=is_owner)
 
-    header_badge = "Все маршруты системы" if is_admin else "Ваши маршруты"
+    header_badge = "Ваши маршруты"
     text = f"🔀 <b>{header_badge} ({len(routes)}):</b>\n\n"
     if not routes:
         text += "Маршруты ещё не созданы. Нажмите <b>«➕ Создать маршрут»</b> ниже."
     else:
         text += "Выберите маршрут для детальной настройки фильтров и опций:"
 
-    kb = routes_list_kb(routes)
-    if isinstance(event, Message):
-        await event.answer(text, reply_markup=kb, parse_mode="HTML")
+    if isinstance(event, CallbackQuery):
+        try:
+            await event.message.edit_text(text, reply_markup=routes_list_kb(routes), parse_mode="HTML")
+        except TelegramBadRequest:
+            pass
+        await event.answer("🔄 Ваши маршруты обновлены")
     else:
-        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await event.answer()
+        await event.answer(text, reply_markup=routes_list_kb(routes), parse_mode="HTML")
 
 
 @router.message(Command("sources"))

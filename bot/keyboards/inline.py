@@ -47,10 +47,6 @@ def admin_panel_kb(is_subadmin: bool = False) -> InlineKeyboardMarkup:
             inline_keyboard=[
                 [
                     InlineKeyboardButton(text="👥 Пользователи (Аккаунты)", callback_data="admin_users"),
-                    InlineKeyboardButton(text="🌐 Все маршруты системы", callback_data="admin_all_routes"),
-                ],
-                [
-                    InlineKeyboardButton(text="📡 Все чаты бота", callback_data="admin_all_chats"),
                     InlineKeyboardButton(text="🛡️ Модерация и чаты", callback_data="admin_moderation_chats"),
                 ],
                 [
@@ -59,9 +55,6 @@ def admin_panel_kb(is_subadmin: bool = False) -> InlineKeyboardMarkup:
                 ],
                 [
                     InlineKeyboardButton(text="📊 Стили участников", callback_data="admin_all_profiles"),
-                    InlineKeyboardButton(text="⚙️ Статус и пауза", callback_data="nav_status"),
-                ],
-                [
                     InlineKeyboardButton(text="⬅️ В главное меню", callback_data="nav_main"),
                 ],
             ]
@@ -412,7 +405,7 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
     strict_short = strict_labels.get(strictness, "🤬 Hard")
 
     warn_sec = int(chat.get("profanity_delete_warn_seconds", 0))
-    warn_sec_label = f"⏱️ Автоудаление: {warn_sec}с" if warn_sec > 0 else "⏱️ Автоудаление: Выкл"
+    warn_sec_label = f"⏱️ Стирать варн: {warn_sec}с" if warn_sec > 0 else "⏱️ Стирать варн: Выкл"
 
     auto_mute = int(chat.get("auto_mute_duration", 0))
     if auto_mute == 0:
@@ -422,14 +415,14 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
     else:
         mute_label = f"🔇 Мут: {auto_mute // 3600}ч"
 
-    warn_sec_label = f"⏱️ Автоудаление: {warn_sec}с" if warn_sec > 0 else "⏱️ Автоудаление: Выкл"
+    warn_sec_label = f"⏱️ Стирать варн: {warn_sec}с" if warn_sec > 0 else "⏱️ Стирать варн: Выкл"
 
     stt_on = bool(chat.get("stt_enabled", 1))
     stt_auto = bool(chat.get("stt_auto_transcribe", 0))
 
     btn_filter = f"{'🟢' if filter_on else '⚪'} Фильтр мата"
     btn_del = f"{'🟢' if del_on else '⚪'} Удалять"
-    btn_warn = f"{'🟢' if warn_on else '⚪'} Предупреждать"
+    btn_warn = f"{'🟢' if warn_on else '⚪'} Варны в чат"
     btn_ai = f"{'🟢' if ai_on else '⚪'} ИИ Ричард"
     btn_stt = f"{'🟢' if stt_on else '⚪'} Речь (STT)"
     btn_stt_auto = f"{'🟢' if stt_auto else '⚪'} Авто-расшифровка"
@@ -809,3 +802,19 @@ def stt_transcribe_kb(file_unique_id: str) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+
+def status_menu_kb(is_paused: bool, is_subadmin: bool = False) -> InlineKeyboardMarkup:
+    """Dedicated keyboard for system status and pause control."""
+    pause_btn_text = "▶️ Возобновить работу" if is_paused else "⏸️ Поставить на паузу"
+    buttons = [
+        [
+            InlineKeyboardButton(text=pause_btn_text, callback_data="admin_toggle_pause"),
+            InlineKeyboardButton(text="🔄 Обновить", callback_data="nav_status"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)

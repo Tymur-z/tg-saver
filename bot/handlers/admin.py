@@ -19,6 +19,7 @@ from database.repositories.config_repo import ConfigRepository
 from moderation.llm_client import LLMClient
 from moderation.profanity import ProfanityDetector
 from bot.keyboards.inline import (
+    status_menu_kb,
     stt_settings_kb,
     stt_transcribe_kb,
     admin_panel_kb,
@@ -294,7 +295,9 @@ async def cb_user_reset_auth(callback: CallbackQuery, db: Database, settings: Se
 @router.message(Command("all_routes"))
 @router.callback_query(F.data == "admin_all_routes")
 async def cmd_admin_all_routes(event: Message | CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
-    if not is_admin:
+    if not is_admin or is_subadmin:
+        if isinstance(event, CallbackQuery):
+            await event.answer("⛔ Доступ разрешён только главному администратору.", show_alert=True)
         return
 
     async with db.connect() as conn:
@@ -315,8 +318,10 @@ async def cmd_admin_all_routes(event: Message | CallbackQuery, db: Database, is_
 
 @router.message(Command("all_chats"))
 @router.callback_query(F.data == "admin_all_chats")
-async def cmd_admin_all_chats(event: Message | CallbackQuery, db: Database, is_admin: bool = False) -> None:
-    if not is_admin:
+async def cmd_admin_all_chats(event: Message | CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        if isinstance(event, CallbackQuery):
+            await event.answer("⛔ Доступ разрешён только главному администратору.", show_alert=True)
         return
 
     async with db.connect() as conn:
@@ -431,7 +436,17 @@ async def state_save_new_password(message: Message, state: FSMContext, db: Datab
 
 @router.message(Command("status"))
 @router.callback_query(F.data == "nav_status")
-async def cmd_status(event: Message | CallbackQuery, db: Database, queue: ForwardQueue, is_admin: bool = False) -> None:
+async def cmd_status(
+    event: Message | CallbackQuery,
+    db: Database,
+    queue: ForwardQueue,
+    is_admin: bool = False,
+    is_subadmin: bool = False,
+) -> None:
+    if not is_admin or is_subadmin:
+        if isinstance(event, CallbackQuery):
+            await event.answer("⛔ Доступ к статусу системы разрешён только главному администратору.", show_alert=True)
+        return
     async with db.connect() as conn:
         profile_repo = ProfileRepository(conn)
         route_repo = RouteRepository(conn)
@@ -461,7 +476,11 @@ async def cmd_status(event: Message | CallbackQuery, db: Database, queue: Forwar
         f"• 📊 Всего обработано: <code>{stats.get('TOTAL', 0)}</code>"
     )
 
-    kb = admin_panel_kb() if is_admin else main_menu_kb(is_admin=False)
+    if is_admin:
+        kb = status_menu_kb(is_paused=is_paused, is_subadmin=is_subadmin)
+    else:
+        kb = main_menu_kb(is_admin=False, is_subadmin=False)
+
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb, parse_mode="HTML")
     else:
@@ -469,26 +488,29 @@ async def cmd_status(event: Message | CallbackQuery, db: Database, queue: Forwar
         await event.answer()
 
 
-@router.message(Command("pause"))
-async def cmd_pause(message: Message, db: Database, is_admin: bool = False) -> None:
-    if not is_admin:
-        await message.answer("⛔ Команда доступна только администраторам.")
+@router.callback_query(F.data == "admin_toggle_pause")
+async def cb_admin_toggle_pause(
+    callback: CallbackQuery,
+    db: Database,
+    queue: ForwardQueue,
+    is_admin: bool = False,
+    is_subadmin: bool = False,
+) -> None:
+    if not is_admin or is_subadmin:
+        await callback.answer("⛔ Доступ разрешён только главному администратору.", show_alert=True)
         return
+        await callback.answer("⛔ Доступ разрешён только администраторам.", show_alert=True)
+        return
+
     async with db.connect() as conn:
         repo = ProfileRepository(conn)
-        await repo.set_system_paused(True)
-    await message.answer("⏸️ <b>Обработка сообщений и пересылка временно приостановлены.</b>", parse_mode="HTML")
+        curr = await repo.is_system_paused()
+        new_paused = not curr
+        await repo.set_system_paused(new_paused)
 
-
-@router.message(Command("resume"))
-async def cmd_resume(message: Message, db: Database, is_admin: bool = False) -> None:
-    if not is_admin:
-        await message.answer("⛔ Команда доступна только администраторам.")
-        return
-    async with db.connect() as conn:
-        repo = ProfileRepository(conn)
-        await repo.set_system_paused(False)
-    await message.answer("▶️ <b>Обработка сообщений возобновлена.</b>", parse_mode="HTML")
+    alert_text = "⏸️ Система приостановлена" if new_paused else "▶️ Система запущена"
+    await callback.answer(alert_text)
+    await cmd_status(callback, db, queue, is_admin=is_admin, is_subadmin=is_subadmin)
 
 
 @router.callback_query(F.data == "nav_main")

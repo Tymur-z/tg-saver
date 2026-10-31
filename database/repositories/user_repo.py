@@ -66,6 +66,7 @@ class UserRepository(BaseRepository):
             SELECT u.*,
                    (SELECT COUNT(*) FROM routes r WHERE r.created_by_user_id = u.user_id) AS routes_count
             FROM users u
+            WHERE u.user_id NOT IN (1087968824, 777000, 136817688)
             ORDER BY u.created_at DESC
             LIMIT ?
             """,

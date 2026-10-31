@@ -70,7 +70,8 @@ async def handle_incoming_message(
         return
 
     # Auto-register/update user information in database for clean analytics display
-    if message.from_user:
+    TELEGRAM_SYSTEM_BOT_IDS = {1087968824, 777000, 136817688}
+    if message.from_user and message.from_user.id not in TELEGRAM_SYSTEM_BOT_IDS:
         try:
             async with db.connect() as conn:
                 u_repo = UserRepository(conn)
@@ -307,7 +308,7 @@ async def handle_incoming_message(
     except Exception as e:
         logger.exception("Error forwarding message %s: %s", message.message_id, e)
 
-    if settings.ANALYTICS_ENABLED and message.from_user and not is_profane:
+    if settings.ANALYTICS_ENABLED and message.from_user and not is_profane and message.from_user.id not in TELEGRAM_SYSTEM_BOT_IDS:
         is_profileable = message.chat.type in ("group", "supergroup", "channel")
         if not is_profileable and message.chat.type == "private":
             try:
@@ -423,6 +424,8 @@ async def handle_incoming_message(
                                     if last_msg:
                                         u_display = f"{last_msg['user_name']}" + (f" (@{last_msg['username']})" if last_msg.get("username") else "")
                                         extra_context = f"[Справка из базы данных чата: последнее найденное сообщение от {u_display}: \"{last_msg['text']}\"]"
+                                    else:
+                                        extra_context = f"[Справка из базы данных чата: от участника @{target_nick} в истории этого чата пока нет сохранённых сообщений. Ты видишь сообщения всех участников группы без ограничений, но конкретно этот участник пока ничего не писал в чат при тебе.]"
                             except Exception:
                                 pass
 
