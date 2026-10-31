@@ -28,8 +28,11 @@ COMPANION_SYSTEM_PROMPT = (
     "3. Если тебя спрашивают о том, что происходит в чате (например, 'о чем тут говорили?', 'что обсуждали?', 'введи в курс дела'), "
     "опирайся на предоставленный контекст недавних сообщений и кратко, ёмко перескажи суть без выдумок.\n"
     "4. Если вопрос не связан с контекстом чата — отвечай напрямую по сути вопроса (учеба, наука, технологии, житейские советы, юмор).\n"
-    "5. Общайся на языке собеседника (преимущественно на русском). Пиши лаконично и читабельно для мобильных экранов, "
-    "используй уместные эмодзи без фанатизма."
+    "5. ФОРМАТИРОВАНИЕ ДЛЯ TELEGRAM:\n"
+    "- НЕ используй заголовки со знаками решётки (### или ##). Заголовки пиши просто жирным шрифтом или отдельной строкой.\n"
+    "- Пиши лаконично, структурированно, без водянистых многостраничных лекций.\n"
+    "- Всегда полностью завершай свою мысль и предложения, не обрывай ответ на полуслове.\n"
+    "- Общайся на языке собеседника (преимущественно на русском). Используй уместные эмодзи."
 )
 
 
@@ -94,6 +97,66 @@ class ChatContextBuffer:
     def clear(self, chat_id: int) -> None:
         if chat_id in self._buffers:
             self._buffers[chat_id].clear()
+
+
+
+def format_companion_html(text: str) -> str:
+    """
+    Converts LLM markdown formatting into safe, properly rendered Telegram HTML.
+    Prevents markdown leaks like ### or raw unrendered asterisks.
+    """
+    if not text:
+        return ""
+    import html
+    t = text.strip()
+
+    # 1. Protect code blocks and inline code
+    code_blocks = []
+    def save_code_block(m):
+        code_blocks.append(m.group(1))
+        return f"\x00CODE_{len(code_blocks)-1}\x00"
+
+    inline_codes = []
+    def save_inline_code(m):
+        inline_codes.append(m.group(1))
+        return f"\x00INLINE_{len(inline_codes)-1}\x00"
+
+    t = re.sub(r'```(?:[a-zA-Z0-9_+-]*\n)?(.*?)```', save_code_block, t, flags=re.DOTALL)
+    t = re.sub(r'`([^`\n]+)`', save_inline_code, t)
+
+    # 2. Convert markdown headers: "### Title" -> "Title"
+    headers = []
+    def save_header(m):
+        headers.append(m.group(1).strip())
+        return f"\x00HEADER_{len(headers)-1}\x00"
+    t = re.sub(r'^(?:#{1,6})\s*(.+)$', save_header, t, flags=re.MULTILINE)
+
+    # 3. Escape HTML characters in regular text
+    t = html.escape(t, quote=False)
+
+    # 4. Bold: **text** or __text__
+    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
+    t = re.sub(r'(?<!\w)__(.+?)__(?!\w)', r'<b>\1</b>', t)
+
+    # 5. Italic: *text* or _text_
+    t = re.sub(r'(?<!\*)\*([^\*\n]+)\*(?!\*)', r'<i>\1</i>', t)
+    t = re.sub(r'(?<!\w)_([^\_\n]+)_(?!\w)', r'<i>\1</i>', t)
+
+    # 6. Restore headers with bold tags
+    for i, h in enumerate(headers):
+        t = t.replace(f"\x00HEADER_{i}\x00", f"<b>{html.escape(h)}</b>")
+
+    # 7. Restore code blocks
+    for i, code in enumerate(code_blocks):
+        escaped_code = html.escape(code.strip())
+        t = t.replace(f"\x00CODE_{i}\x00", f"<pre><code>{escaped_code}</code></pre>")
+
+    # 8. Restore inline codes
+    for i, code in enumerate(inline_codes):
+        escaped_code = html.escape(code.strip())
+        t = t.replace(f"\x00INLINE_{i}\x00", f"<code>{escaped_code}</code>")
+
+    return t
 
 
 class ChatCompanion:
@@ -213,7 +276,7 @@ class ChatCompanion:
             reply = await self.llm_client.chat_completion(
                 messages=messages,
                 temperature=0.7,
-                max_tokens=350,
+                max_tokens=900,
             )
             if reply:
                 reply = reply.strip()

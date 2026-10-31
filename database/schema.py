@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS chats (
     profanity_warn_enabled BOOLEAN NOT NULL DEFAULT 0,
     profanity_delete_enabled BOOLEAN NOT NULL DEFAULT 0,
     chat_ai_enabled BOOLEAN NOT NULL DEFAULT 0,
+    profanity_strictness TEXT NOT NULL DEFAULT 'hard',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -132,6 +133,7 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         ("profanity_warn_enabled", "BOOLEAN", "0"),
         ("profanity_delete_enabled", "BOOLEAN", "0"),
         ("chat_ai_enabled", "BOOLEAN", "0"),
+        ("profanity_strictness", "TEXT", "'hard'"),
     ]:
         try:
             await conn.execute(f"ALTER TABLE chats ADD COLUMN {col} {col_type} NOT NULL DEFAULT {default}")

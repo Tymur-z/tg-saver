@@ -14,7 +14,7 @@ from database.repositories.route_repo import RouteRepository
 from forwarder.engine import ForwardEngine
 from forwarder.media_handler import MediaHandler
 from analytics.profiler import StyleProfiler
-from moderation.companion import ChatCompanion
+from moderation.companion import ChatCompanion, format_companion_html
 from moderation.profanity import ProfanityDetector
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,8 @@ async def handle_incoming_message(
             if chat and chat.get("profanity_filter_enabled") and profanity_detector:
                 text_to_check = MediaHandler.get_text_or_caption(message)
                 if text_to_check and text_to_check.strip():
-                    prof_result = await profanity_detector.check_text(text_to_check)
+                    strictness = chat.get("profanity_strictness", "hard")
+                    prof_result = await profanity_detector.check_text(text_to_check, strictness=strictness)
                     if prof_result.is_profane:
                         is_profane = True
                         logger.info(
@@ -181,7 +182,12 @@ async def handle_incoming_message(
                         user_prompt=prompt,
                     )
                     if reply_text:
-                        sent_reply = await message.reply(reply_text, parse_mode=None)
+                        formatted_reply = format_companion_html(reply_text)
+                        try:
+                            sent_reply = await message.reply(formatted_reply, parse_mode="HTML")
+                        except Exception as html_err:
+                            logger.debug("Could not send reply with HTML parse_mode: %s, falling back to plain", html_err)
+                            sent_reply = await message.reply(reply_text, parse_mode=None)
                         # Also forward/copy Richard's reply to destination chats if active routes exist
                         try:
                             await forward_engine.process_incoming_message(sent_reply)

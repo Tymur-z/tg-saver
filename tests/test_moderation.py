@@ -56,7 +56,7 @@ async def test_detector_cache() -> None:
     text = "Какое-то проверочное сообщение"
 
     res1 = await detector.check_text(text)
-    assert text in detector._cache
+    assert any(text in k for k in detector._cache)
 
     res2 = await detector.check_text(text)
     assert res1 is res2

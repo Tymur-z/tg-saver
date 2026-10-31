@@ -254,6 +254,6 @@ async def test_forward_handler_companion_silence_when_disabled(test_db: Database
         companion=companion,
     )
 
-    msg.reply.assert_awaited_once_with("Привет из ИИ!", parse_mode=None)
+    msg.reply.assert_awaited_once_with("Привет из ИИ!", parse_mode="HTML")
     mock_llm.chat_completion.assert_awaited_once()
 

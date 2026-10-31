@@ -507,6 +507,8 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
     w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
     d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
     ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
+    strictness = chat.get("profanity_strictness", "hard")
+    strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон и т.д.)" if strictness == "hard" else "⚠️ Жесткий мат + легкая брань (блин, тупой, дурак и т.д.)"
     div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     lines = [
@@ -514,6 +516,7 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
         f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
         "🛡️ <b>Модерация ненормативной лексики:</b>",
         f"• Фильтр матов: {f_on}",
+        f"• Режим строгости: <b>{strictness_desc}</b>",
         f"• Предупреждать нарушителя: {w_on}",
         f"• Удалять сообщения с матом: {d_on}\n{div}",
         "💬 <b>Режим ИИ-собеседника:</b>",
@@ -523,6 +526,45 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
     text = "\n".join(lines)
     await callback.message.edit_text(text, reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
     await callback.answer()
+
+
+
+@router.callback_query(F.data.startswith("mod_strictness:"))
+async def cb_chat_moderation_strictness(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    chat_id = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        new_strictness = await chat_repo.cycle_strictness(chat_id)
+        chat = await chat_repo.get_chat(chat_id)
+
+    title = chat.get("title") or f"ID {chat_id}"
+    c_type = chat.get("chat_type", "group")
+    f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
+    w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
+    d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
+    ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
+    strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон и т.д.)" if new_strictness == "hard" else "⚠️ Жесткий мат + легкая брань (блин, тупой, дурак и т.д.)"
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
+
+    lines = [
+        f"🛡️ <b>Настройки чата:</b> {title}",
+        f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
+        "🛡️ <b>Модерация ненормативной лексики:</b>",
+        f"• Фильтр матов: {f_on}",
+        f"• Режим строгости: <b>{strictness_desc}</b>",
+        f"• Предупреждать нарушителя: {w_on}",
+        f"• Удалять сообщения с матом: {d_on}\n{div}",
+        "💬 <b>Режим ИИ-собеседника:</b>",
+        f"• Ответ на теги и Reply: {ai_on}\n{div}",
+        "👇 <i>Нажмите на кнопку ниже для переключения:</i>",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
+    lbl = "Только жесткий мат" if new_strictness == "hard" else "Жесткий мат + легкая брань"
+    await callback.answer(f"Строгость: {lbl}")
 
 
 @router.callback_query(F.data.startswith("mod_toggle:"))
@@ -550,6 +592,8 @@ async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_ad
     w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
     d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
     ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
+    strictness = chat.get("profanity_strictness", "hard")
+    strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон и т.д.)" if strictness == "hard" else "⚠️ Жесткий мат + легкая брань (блин, тупой, дурак и т.д.)"
     div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     lines = [
@@ -557,6 +601,7 @@ async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_ad
         f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
         "🛡️ <b>Модерация ненормативной лексики:</b>",
         f"• Фильтр матов: {f_on}",
+        f"• Режим строгости: <b>{strictness_desc}</b>",
         f"• Предупреждать нарушителя: {w_on}",
         f"• Удалять сообщения с матом: {d_on}\n{div}",
         "💬 <b>Режим ИИ-собеседника:</b>",

@@ -143,6 +143,18 @@ class ChatRepository(BaseRepository):
         )
         return [dict(r) for r in rows]
 
+
+    async def cycle_strictness(self, chat_id: int) -> str:
+        """Cycles between 'hard' (только жесткий мат) and 'all' (жесткий мат + легкая брань/оскорбления)."""
+        chat = await self.get_chat(chat_id)
+        current = chat.get("profanity_strictness", "hard") if chat else "hard"
+        new_val = "all" if current == "hard" else "hard"
+        await self.execute(
+            "UPDATE chats SET profanity_strictness = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
+            (new_val, chat_id),
+        )
+        return new_val
+
     async def toggle_setting(self, chat_id: int, field_name: str) -> bool:
         """Toggle a boolean moderation setting for a specific chat."""
         allowed_fields = {
