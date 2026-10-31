@@ -11,6 +11,7 @@ from aiogram import Router
 from aiogram.types import ChatPermissions, Message, CallbackQuery
 from aiogram import F
 import html
+import re
 from moderation.stt_service import NvidiaSTTService
 
 from config.settings import Settings
@@ -47,6 +48,59 @@ async def handle_channel_post(
     except Exception as e:
         logger.exception("Error processing channel post %s: %s", message.message_id, e)
 
+
+
+TRANSCRIPTION_KEYWORDS = {
+    "transcribe", "stt", "speech", "transcript",
+    "текст", "переведи", "расшифруй", "расшифровка", "транскрипция",
+    "что там", "что тут", "что в кружке", "что в голосовом", "что в гс",
+    "что в войсе", "что он сказал", "что она сказала", "что они сказали",
+    "что было сказано", "что тут сказано", "что там сказано", "что сказано",
+    "что говориться", "что говорится", "что говорит",
+    "что там говорить", "что говориться в кружке", "что говорится в кружке",
+    "я про етот", "я про этот", "про что кружок", "про что гс", "про что голосовое",
+    "о чем кружок", "о чём кружок", "о чем голосовое", "о чём голосовое",
+    "what did he say", "what did she say", "what was said", "what is said",
+    "what is in the circle", "what is in the voice", "what does it say"
+}
+
+TRANSCRIPTION_PATTERNS = [
+    re.compile(r"^(?:/)?(?:transcribe|stt|speech)", re.IGNORECASE),
+    re.compile(r"^(?:текст|переведи|расшифруй|расшифровка|транскрипц\w*|в\s+текст|transcribe|transcript)", re.IGNORECASE),
+    re.compile(r"(?:что|о\s*ч[её]м|про\s+что)\s+(?:там|тут|он[а-я]*|было|говорит\w*|сказан\w*|в\s+(?:кружк\w*|голосов\w*|гс|войс\w*|аудио|этом|етом))", re.IGNORECASE),
+    re.compile(r"^(?:что\s+там|что\s+тут|что\s+в\s+кружке|что\s+в\s+голосов\w*|что\s+в\s+гс|что\s+он\s+сказал|что\s+она\s+сказала|что\s+говорит\w*|что\s+там\s+говорить|что\s+говорит[ьс]+я\s+в\s+кружке|я\s+про\s+[еэ]тот)$", re.IGNORECASE),
+    re.compile(r"(?:what\s+(?:did\s+(?:he|she|they)\s+say|was\s+said|is\s+said|is\s+in\s+the\s+(?:circle|voice|audio)|does\s+it\s+say))", re.IGNORECASE),
+]
+
+
+def is_transcription_request(text: str) -> bool:
+    """Returns True if user asks to transcribe or what was said in audio/video note, without conversational chat."""
+    if not text:
+        return False
+    t = text.strip().lower()
+
+    # Strip bot mentions and name calls
+    t = re.sub(r"@[a-zA-Z0-9_]+", "", t).strip()
+    t = re.sub(r"^(?:ричард|richard)[,\s:!-]+", "", t, flags=re.IGNORECASE).strip()
+    t = re.sub(r"(?:^|[\s,])(?:ричард|richard)(?:[\s,!?]|$)", " ", t, flags=re.IGNORECASE).strip()
+
+    # Strip polite wrappers
+    t = re.sub(r"(?:пожалуйста|плиз|пж|сделай|можешь|подскажи|расскажи|please|pls|can\s+you|could\s+you)", "", t, flags=re.IGNORECASE).strip()
+
+    clean = re.sub(r"[?!.,;:]+", " ", t).strip()
+    clean = " ".join(clean.split())
+
+    # Pure conversational opinions should not trigger direct transcription
+    opinion_pattern = re.compile(r"(?:что\s+думаешь|как\s+тебе|согласен|тво[её]\s+мнение|мнение|оцени|прокомментируй|what\s+do\s+you\s+think|your\s+opinion)", re.IGNORECASE)
+    if opinion_pattern.search(clean):
+        return False
+
+    if clean in TRANSCRIPTION_KEYWORDS:
+        return True
+    for p in TRANSCRIPTION_PATTERNS:
+        if p.search(clean) or p.search(t):
+            return True
+    return False
 
 @router.message()
 async def handle_incoming_message(
@@ -87,19 +141,14 @@ async def handle_incoming_message(
     msg_text = message.text or message.caption
     raw_incoming_text = msg_text or ""
 
-    # Check for manual speech-to-text transcription request
-    lower_text = raw_incoming_text.strip().lower()
-    transcribe_triggers = {
-        "/transcribe", "/stt", "/speech", "текст", "переведи", "расшифруй",
-        "расшифровка", "что там", "что в кружке", "что в голосовом", "transcribe",
-        "что тут", "что он сказал", "что она сказала"
-    }
-    if message.reply_to_message and (lower_text in transcribe_triggers or lower_text.startswith(("/transcribe", "/stt"))):
+    # Check for speech-to-text transcription request
+    if message.reply_to_message and is_transcription_request(raw_incoming_text):
         replied = message.reply_to_message
-        if getattr(replied, "voice", None) or getattr(replied, "video_note", None):
-            media_obj = getattr(replied, "voice", None) or getattr(replied, "video_note", None)
-            suffix = ".oga" if getattr(replied, "voice", None) else ".mp4"
-            tag = "Голосовое" if getattr(replied, "voice", None) else "Кружок"
+        has_media = bool(getattr(replied, "voice", None) or getattr(replied, "video_note", None) or getattr(replied, "audio", None))
+        if has_media:
+            media_obj = getattr(replied, "voice", None) or getattr(replied, "video_note", None) or getattr(replied, "audio", None)
+            suffix = ".oga" if getattr(replied, "voice", None) else (".mp4" if getattr(replied, "video_note", None) else ".mp3")
+            tag = "Голосовое" if getattr(replied, "voice", None) else ("Кружок" if getattr(replied, "video_note", None) else "Аудио")
             if stt_service and stt_service.is_available():
                 transcript = await stt_service.transcribe_telegram_file(
                     bot=message.bot,
@@ -428,6 +477,38 @@ async def handle_incoming_message(
                                         extra_context = f"[Справка из базы данных чата: от участника @{target_nick} в истории этого чата пока нет сохранённых сообщений. Ты видишь сообщения всех участников группы без ограничений, но конкретно этот участник пока ничего не писал в чат при тебе.]"
                             except Exception:
                                 pass
+
+                    # If this is a reply to another message, enrich companion with replied content
+                    replied_msg = message.reply_to_message
+                    if replied_msg:
+                        author_name = replied_msg.from_user.first_name if replied_msg.from_user else "Участник"
+                        if replied_msg.from_user and replied_msg.from_user.username:
+                            author_name += f" (@{replied_msg.from_user.username})"
+
+                        has_rep_audio = bool(getattr(replied_msg, "voice", None) or getattr(replied_msg, "video_note", None) or getattr(replied_msg, "audio", None))
+                        if has_rep_audio and stt_service and stt_service.is_available():
+                            r_media = getattr(replied_msg, "voice", None) or getattr(replied_msg, "video_note", None) or getattr(replied_msg, "audio", None)
+                            r_suffix = ".oga" if getattr(replied_msg, "voice", None) else (".mp4" if getattr(replied_msg, "video_note", None) else ".mp3")
+                            r_tag = "Голосовое" if getattr(replied_msg, "voice", None) else ("Кружок" if getattr(replied_msg, "video_note", None) else "Аудио")
+                            try:
+                                r_transcript = await stt_service.transcribe_telegram_file(
+                                    bot=message.bot,
+                                    file_id=r_media.file_id,
+                                    file_unique_id=r_media.file_unique_id,
+                                    suffix=r_suffix,
+                                )
+                                if r_transcript:
+                                    extra_context += (
+                                        f"\n[Контекст: пользователь {caller_name} обращается к тебе по поводу {r_tag.lower()} от {author_name}. "
+                                        f"В этом сообщении было сказано: \"{r_transcript}\"]"
+                                    )
+                            except Exception as rep_err:
+                                logger.debug("Could not transcribe replied media for companion: %s", rep_err)
+                        elif replied_msg.text or replied_msg.caption:
+                            rep_text = (replied_msg.text or replied_msg.caption)[:350]
+                            extra_context += (
+                                f"\n[Контекст: пользователь {caller_name} отвечает на сообщение от {author_name}: \"{rep_text}\"]"
+                            )
 
                     reply_text = await companion.generate_reply(
                         chat_id=message.chat.id,

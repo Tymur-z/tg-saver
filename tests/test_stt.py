@@ -202,3 +202,96 @@ async def test_stt_voice_triggers_companion_richard(test_db: Database, test_stt_
     voice_msg.reply.assert_called_once()
     reply_text = voice_msg.reply.call_args[0][0]
     assert "Привет! Я отлично слышу твой голосовой кружок." in reply_text
+
+
+@pytest.mark.asyncio
+async def test_reply_to_circle_asking_what_was_said(test_db: Database, test_stt_service: NvidiaSTTService) -> None:
+    """When a user replies to a circle asking 'Ричард, что он сказал?' or 'что в кружке', it outputs pure transcription and does not chat."""
+    from moderation.companion import ChatCompanion
+    from moderation.llm_client import LLMClient
+
+    settings = Settings(BOT_TOKEN="123:ABC", OWNER_ID=999, ANALYTICS_ENABLED=False)
+    mock_forward_engine = AsyncMock()
+    mock_profiler = AsyncMock()
+
+    mock_llm = AsyncMock(spec=LLMClient)
+    mock_llm.api_key = "test-key"
+    companion = ChatCompanion(llm_client=mock_llm)
+
+    chat_id = -100999
+    async with test_db.connect() as conn:
+        repo = ChatRepository(conn)
+        await repo.upsert_chat(chat_id=chat_id, title="Test Group", chat_type="supergroup")
+        await conn.execute("UPDATE chats SET chat_ai_enabled = 1, stt_enabled = 1 WHERE chat_id = ?", (chat_id,))
+        await conn.commit()
+
+    circle_msg = make_mock_message(chat_id=chat_id, video_note=True)
+    user_ask_msg = make_mock_message(chat_id=chat_id, text="Ричард, что он сказал?", reply_to=circle_msg)
+
+    with patch.object(test_stt_service, "transcribe_telegram_file", return_value="Секретная информация из кружка"):
+        await handle_incoming_message(
+            message=user_ask_msg,
+            forward_engine=mock_forward_engine,
+            style_profiler=mock_profiler,
+            settings=settings,
+            db=test_db,
+            companion=companion,
+            stt_service=test_stt_service,
+        )
+
+    # Bot must reply with transcription
+    user_ask_msg.reply.assert_called_once()
+    reply_call = user_ask_msg.reply.call_args[0][0]
+    assert "Расшифровка (Кружок):" in reply_call
+    assert "Секретная информация из кружка" in reply_call
+    # LLM companion should NOT be called for casual chatter
+    mock_llm.chat_completion.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reply_to_circle_conversational_enriches_extra_context(test_db: Database, test_stt_service: NvidiaSTTService) -> None:
+    """When a user asks Richard's opinion about a circle, Richard converses with the circle transcription in extra_context."""
+    from moderation.companion import ChatCompanion
+    from moderation.llm_client import LLMClient
+
+    settings = Settings(BOT_TOKEN="123:ABC", OWNER_ID=999, ANALYTICS_ENABLED=False)
+    mock_forward_engine = AsyncMock()
+    mock_profiler = AsyncMock()
+
+    mock_llm = AsyncMock(spec=LLMClient)
+    mock_llm.api_key = "test-key"
+    mock_llm.chat_completion.return_value = "Мне кажется, автор кружка абсолютно прав!"
+    companion = ChatCompanion(llm_client=mock_llm)
+    companion._bot_user = MagicMock(id=7761395820, username="RichardHelperBot")
+
+    chat_id = -100998
+    async with test_db.connect() as conn:
+        repo = ChatRepository(conn)
+        await repo.upsert_chat(chat_id=chat_id, title="Test Group", chat_type="supergroup")
+        await conn.execute("UPDATE chats SET chat_ai_enabled = 1, stt_enabled = 1 WHERE chat_id = ?", (chat_id,))
+        await conn.commit()
+
+    circle_msg = make_mock_message(chat_id=chat_id, video_note=True)
+    user_conv_msg = make_mock_message(chat_id=chat_id, text="Ричард, что думаешь по поводу кружка?", reply_to=circle_msg)
+
+    with patch.object(test_stt_service, "transcribe_telegram_file", return_value="Мы сегодня открываем новый проект!"):
+        await handle_incoming_message(
+            message=user_conv_msg,
+            forward_engine=mock_forward_engine,
+            style_profiler=mock_profiler,
+            settings=settings,
+            db=test_db,
+            companion=companion,
+            stt_service=test_stt_service,
+        )
+
+    # LLM should be called
+    mock_llm.chat_completion.assert_called_once()
+    # Check messages sent to LLM
+    call_messages = mock_llm.chat_completion.call_args[1]["messages"]
+    system_contents = [m["content"] for m in call_messages if m["role"] == "system"]
+    assert any("Мы сегодня открываем новый проект!" in c for c in system_contents)
+
+    user_conv_msg.reply.assert_called_once()
+    assert "Мне кажется, автор кружка абсолютно прав!" in user_conv_msg.reply.call_args[0][0]
+
