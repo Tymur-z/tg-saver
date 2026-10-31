@@ -195,10 +195,12 @@ async def handle_incoming_message(
     # Save to context buffer for companion awareness (RAM + Persistent SQLite)
     if companion and not is_profane and msg_text:
         u_name = message.from_user.full_name if message.from_user else "Участник"
+        u_username = message.from_user.username if message.from_user else None
         companion.context_buffer.add_message(
             chat_id=message.chat.id,
             user_id=message.from_user.id if message.from_user else 0,
             user_name=u_name,
+            username=u_username,
             text=msg_text,
             is_bot=False,
         )
@@ -208,6 +210,7 @@ async def handle_incoming_message(
                     chat_id=message.chat.id,
                     user_id=message.from_user.id if message.from_user else 0,
                     user_name=u_name,
+                    username=u_username,
                     text=msg_text,
                     is_bot=False,
                 )
@@ -292,17 +295,39 @@ async def handle_incoming_message(
                                         chat_id=message.chat.id,
                                         user_id=item["user_id"],
                                         user_name=item["user_name"] or "Участник",
+                                        username=item.get("username"),
                                         text=item["text"],
                                         is_bot=bool(item["is_bot"]),
                                     )
                         except Exception:
                             pass
 
+                    # Check if user asks what a specific participant wrote
+                    import re
+                    target_user_match = re.search(
+                        r"(?:что\s+(?:писал|написал)[а-я]*|сообщени[ея]\s+от|last\s+message\s+(?:that\s+)?|last\s+message\s+(?:from|by)\s+|message\s+(?:that\s+)?|did\s+)\s*@?([a-zA-Z0-9_а-яА-ЯёЁ]+)",
+                        prompt,
+                        re.IGNORECASE,
+                    )
+                    extra_context = ""
+                    if target_user_match:
+                        target_nick = target_user_match.group(1).strip()
+                        if target_nick.lower() not in ("ты", "ричард", "richard", "you"):
+                            try:
+                                async with db.connect() as conn:
+                                    last_msg = await ChatRepository(conn).get_last_message_from_user(message.chat.id, target_nick)
+                                    if last_msg:
+                                        u_display = f"{last_msg['user_name']}" + (f" (@{last_msg['username']})" if last_msg.get("username") else "")
+                                        extra_context = f"[Справка из базы данных чата: последнее найденное сообщение от {u_display}: \"{last_msg['text']}\"]"
+                            except Exception:
+                                pass
+
                     reply_text = await companion.generate_reply(
                         chat_id=message.chat.id,
                         user_name=caller_name,
                         user_prompt=prompt,
                         is_owner=is_owner,
+                        extra_context=extra_context,
                     )
                     if reply_text:
                         # Save companion reply to persistent DB

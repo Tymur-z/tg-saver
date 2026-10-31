@@ -256,12 +256,25 @@ class ChatRepository(BaseRepository):
         user_id: int,
         user_name: str,
         text: str,
+        username: Optional[str] = None,
         is_bot: bool = False,
     ) -> None:
         await self.execute(
-            "INSERT INTO companion_chat_history (chat_id, user_id, user_name, text, is_bot) VALUES (?, ?, ?, ?, ?)",
-            (chat_id, user_id, user_name, text, 1 if is_bot else 0),
+            "INSERT INTO companion_chat_history (chat_id, user_id, user_name, username, text, is_bot) VALUES (?, ?, ?, ?, ?, ?)",
+            (chat_id, user_id, user_name, username or "", text, 1 if is_bot else 0),
         )
+
+    async def get_last_message_from_user(
+        self,
+        chat_id: int,
+        target_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        clean_target = target_name.strip().lstrip("@").lower()
+        row = await self.fetch_one(
+            "SELECT * FROM companion_chat_history WHERE chat_id = ? AND is_bot = 0 AND (lower(user_name) LIKE '%' || ? || '%' OR lower(username) = ?) ORDER BY id DESC LIMIT 1",
+            (chat_id, clean_target, clean_target),
+        )
+        return dict(row) if row else None
 
     async def get_companion_history(self, chat_id: int, limit: int = 25) -> List[Dict[str, Any]]:
         rows = await self.fetch_all(

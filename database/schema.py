@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS companion_chat_history (
     chat_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
     user_name TEXT,
+    username TEXT DEFAULT '',
     text TEXT NOT NULL,
     is_bot BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -173,5 +174,9 @@ async def init_db(conn: aiosqlite.Connection) -> None:
     except Exception:
         pass
 
+    try:
+        await conn.execute("ALTER TABLE companion_chat_history ADD COLUMN username TEXT DEFAULT ''")
+    except Exception:
+        pass
     await conn.commit()
     logger.info("Database schema initialized successfully.")
