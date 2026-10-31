@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "https://api.openai.com/v1"
     LLM_MODEL: str = "gpt-4o-mini"
 
+    STT_ENABLED: bool = True
+    STT_API_KEY: str = ""
+    STT_FUNCTION_ID: str = "b702f636-f60c-4a3d-a6f4-f3568c13bd7d"
+    STT_URI: str = "grpc.nvcf.nvidia.com:443"
+    STT_LANGUAGE: str = "ru-RU"
+
     @field_validator("ADMIN_IDS", mode="before")
     @classmethod
     def normalize_admin_ids(cls, v: object) -> str:

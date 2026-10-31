@@ -19,6 +19,8 @@ from database.repositories.config_repo import ConfigRepository
 from moderation.llm_client import LLMClient
 from moderation.profanity import ProfanityDetector
 from bot.keyboards.inline import (
+    stt_settings_kb,
+    stt_transcribe_kb,
     admin_panel_kb,
     all_routes_kb,
     chat_moderation_detail_kb,
@@ -600,6 +602,10 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
         "🤖 <b>ИИ Собеседник (Ричард):</b>",
         f"• 💬 <b>Общение в чате:</b> {a_on}",
         "━━━━━━━━━━━━━━━━━━━━━━",
+        "🎙️ <b>Распознавание речи (NVIDIA Whisper):</b>",
+        f"• 🗣️ <b>Голосовые и видео-кружки:</b> {'🟢 Включено' if chat.get('stt_enabled', 1) else '⚪ Выключено'}",
+        f"• 📝 <b>Авто-расшифровка в чат:</b> {'🟢 Включена' if chat.get('stt_auto_transcribe', 0) else '⚪ Выключена'}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
         "💡 <i>Используйте кнопки ниже для переключения опций:</i>",
     ]
     await callback.message.edit_text("\n".join(lines), reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
@@ -631,6 +637,10 @@ class AdminLLMStates(StatesGroup):
     waiting_for_context = State()
     waiting_for_tokens = State()
     waiting_for_random_chance = State()
+
+
+class AdminSTTStates(StatesGroup):
+    waiting_for_api_key = State()
 
 
 class AdminModStates(StatesGroup):
@@ -1947,3 +1957,233 @@ async def cb_mod_clear_user_ctx(
 
     await callback.answer("Контекст участника успешно очищен!", show_alert=True)
     await cb_mod_users_ctx(callback, db, is_admin=is_admin)
+
+# ─── NVIDIA STT (SPEECH-TO-TEXT) SETTINGS ───────────────────────────────────
+
+async def _render_stt_settings(conn, settings: Settings, is_subadmin: bool = False) -> tuple[str, dict]:
+    config_repo = ConfigRepository(conn)
+    conf = await config_repo.get_stt_config(
+        default_enabled=settings.STT_ENABLED,
+        default_api_key=settings.STT_API_KEY,
+        default_function_id=settings.STT_FUNCTION_ID,
+        default_uri=settings.STT_URI,
+        default_language=settings.STT_LANGUAGE,
+    )
+    is_on = conf.get("stt_enabled", True)
+    api_key = conf.get("stt_api_key", "")
+    lang = conf.get("stt_language", "ru-RU")
+    lang_labels = {
+        "ru-RU": "🇷🇺 Русский (ru-RU)",
+        "multi": "🌐 Мультиязычный (multi)",
+        "en-US": "🇺🇸 Английский (en-US)",
+    }
+    lang_str = lang_labels.get(lang, lang)
+
+    if api_key:
+        if is_subadmin:
+            masked_key = "••••••••••••••••••••••••••••••••"
+        else:
+            masked_key = f"{api_key[:10]}...{api_key[-4:]}" if len(api_key) > 14 else "••••••••"
+    else:
+        masked_key = "<i>(не задан)</i>"
+
+    lines = [
+        "🎙️ <b>Распознавание речи (NVIDIA Whisper Large v3)</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"• ⚡ <b>Статус:</b> {'🟢 Включено' if is_on else '⚪ Выключено'}",
+        f"• 🧠 <b>Модель:</b> <code>openai/whisper-large-v3</code> (NVIDIA Riva)",
+        f"• 🌐 <b>Сервер:</b> <code>{conf.get('stt_uri', 'grpc.nvcf.nvidia.com:443')}</code>",
+        f"• 🔑 <b>API-ключ:</b> <code>{masked_key}</code>",
+        f"• 🗣️ <b>Язык по умолчанию:</b> <b>{lang_str}</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "💡 <b>Возможности:</b>",
+        "• Распознает голосовые сообщения (voice) и видео-кружочки (video_note)",
+        "• Точность распознавания речи достигает <b>99%</b>",
+        "• Текст автоматически поступает в память ИИ (Ричард понимает кружки и голосовые)",
+        "• Пользователи могут запрашивать расшифровку в чате (реплика <code>/transcribe</code> или <code>текст</code>)",
+    ]
+    return "\n".join(lines), conf
+
+
+@router.message(Command("stt"))
+@router.callback_query(F.data == "admin_stt_settings")
+async def cmd_admin_stt_settings(
+    event: Message | CallbackQuery,
+    db: Database,
+    settings: Settings,
+    is_admin: bool = False,
+    is_subadmin: bool = False,
+    state: Optional[FSMContext] = None,
+) -> None:
+    if not is_admin:
+        if isinstance(event, CallbackQuery):
+            await event.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    if state:
+        await state.clear()
+
+    async with db.connect() as conn:
+        text, conf = await _render_stt_settings(conn, settings, is_subadmin=is_subadmin)
+
+    kb = stt_settings_kb(conf, is_subadmin=is_subadmin)
+    if isinstance(event, CallbackQuery):
+        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await event.answer()
+    else:
+        await event.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "stt_toggle_enabled")
+async def cb_stt_toggle_enabled(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    stt_service: Optional[Any] = None,
+    is_admin: bool = False,
+    is_subadmin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        curr = await config_repo.get_stt_config(default_enabled=settings.STT_ENABLED)
+        new_val = not curr["stt_enabled"]
+        await config_repo.set_stt_config(enabled=new_val)
+        if stt_service:
+            stt_service.update_config(enabled=new_val)
+        text, conf = await _render_stt_settings(conn, settings, is_subadmin=is_subadmin)
+
+    await callback.message.edit_text(text, reply_markup=stt_settings_kb(conf, is_subadmin=is_subadmin), parse_mode="HTML")
+    state_desc = "включено" if new_val else "выключено"
+    await callback.answer(f"Распознавание речи {state_desc}")
+
+
+@router.callback_query(F.data == "stt_cycle_lang")
+async def cb_stt_cycle_lang(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    stt_service: Optional[Any] = None,
+    is_admin: bool = False,
+    is_subadmin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    lang_cycle = {"ru-RU": "multi", "multi": "en-US", "en-US": "ru-RU"}
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        curr = await config_repo.get_stt_config()
+        current_lang = curr.get("stt_language", "ru-RU")
+        new_lang = lang_cycle.get(current_lang, "ru-RU")
+        await config_repo.set_stt_config(language=new_lang)
+        if stt_service:
+            stt_service.update_config(language_code=new_lang)
+        text, conf = await _render_stt_settings(conn, settings, is_subadmin=is_subadmin)
+
+    await callback.message.edit_text(text, reply_markup=stt_settings_kb(conf, is_subadmin=is_subadmin), parse_mode="HTML")
+    await callback.answer(f"Язык изменен на: {new_lang}")
+
+
+@router.callback_query(F.data == "stt_set_key")
+async def cb_stt_set_key(
+    callback: CallbackQuery,
+    state: FSMContext,
+    is_admin: bool = False,
+    is_subadmin: bool = False,
+) -> None:
+    if not is_admin or is_subadmin:
+        await callback.answer("⛔ Доступ к API-ключам разрешён только старшему администратору.", show_alert=True)
+        return
+
+    await state.set_state(AdminSTTStates.waiting_for_api_key)
+    lines = [
+        "🔑 <b>Ввод нового API-ключа NVIDIA (Whisper Large v3)</b>\n",
+        "Отправьте ваш API-ключ сообщением в этот чат (например <code>nvapi-...</code>).",
+        "<i>В целях безопасности ваше сообщение с ключом будет сразу удалено после сохранения.</i>",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=llm_cancel_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(AdminSTTStates.waiting_for_api_key)
+async def proc_admin_stt_api_key(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    stt_service: Optional[Any] = None,
+    is_admin: bool = False,
+    is_subadmin: bool = False,
+) -> None:
+    if not is_admin or is_subadmin:
+        await state.clear()
+        return
+
+    raw_key = (message.text or "").strip()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    if not raw_key:
+        await message.answer("⚠️ Ключ не может быть пустым.")
+        return
+
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_stt_config(api_key=raw_key)
+        if stt_service:
+            stt_service.update_config(api_key=raw_key)
+        text, conf = await _render_stt_settings(conn, settings, is_subadmin=is_subadmin)
+
+    await state.clear()
+    await message.answer("✅ <b>API-ключ NVIDIA успешно сохранён!</b>\n\n" + text, reply_markup=stt_settings_kb(conf, is_subadmin=is_subadmin), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "stt_test")
+async def cb_stt_test(
+    callback: CallbackQuery,
+    stt_service: Optional[Any] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    if not stt_service or not stt_service.is_available():
+        await callback.answer("❌ STT сервис не активен или не задан API-ключ.", show_alert=True)
+        return
+
+    await callback.answer("⏳ Тестирование подключения к NVIDIA Riva...")
+    try:
+        # Generate 0.5s silent/sine WAV PCM
+        import wave, io, struct, math
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            samples = [int(1000 * math.sin(2 * math.pi * 440 * i / 16000)) for i in range(8000)]
+            wf.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+        test_wav = buf.getvalue()
+
+        loop = asyncio.get_running_loop()
+        res = await asyncio.to_thread(stt_service._sync_recognize, test_wav, "ru-RU")
+        await callback.message.answer(
+            "✅ <b>Тест NVIDIA Riva Whisper успешно пройден!</b>\n\n"
+            f"• Статус соединения: <b>OK</b>\n"
+            f"• Модель: <code>whisper-large-v3</code>\n"
+            f"• Результат теста: <i>соединение активно</i>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("STT Test failed: %s", e)
+        await callback.message.answer(
+            f"⚠️ <b>Ошибка при тестировании NVIDIA Whisper:</b>\n<code>{html.escape(str(e))}</code>",
+            parse_mode="HTML",
+        )

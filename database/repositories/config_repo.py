@@ -129,3 +129,45 @@ class ConfigRepository(BaseRepository):
             await self.set_value("llm_companion_random_chance", str(random_reply_chance))
 
         return await self.get_llm_config()
+
+
+    async def get_stt_config(
+        self,
+        default_enabled: bool = True,
+        default_api_key: str = "",
+        default_function_id: str = "b702f636-f60c-4a3d-a6f4-f3568c13bd7d",
+        default_uri: str = "grpc.nvcf.nvidia.com:443",
+        default_language: str = "ru-RU",
+    ) -> Dict[str, Any]:
+        enabled_val = await self.get_value("stt_enabled", "1" if default_enabled else "0")
+        api_key_val = await self.get_value("stt_api_key", default_api_key)
+        func_id_val = await self.get_value("stt_function_id", default_function_id)
+        uri_val = await self.get_value("stt_uri", default_uri)
+        lang_val = await self.get_value("stt_language", default_language)
+        return {
+            "stt_enabled": enabled_val == "1",
+            "stt_api_key": api_key_val or default_api_key,
+            "stt_function_id": func_id_val or default_function_id,
+            "stt_uri": uri_val or default_uri,
+            "stt_language": lang_val or default_language,
+        }
+
+    async def set_stt_config(
+        self,
+        enabled: Optional[bool] = None,
+        api_key: Optional[str] = None,
+        function_id: Optional[str] = None,
+        uri: Optional[str] = None,
+        language: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if enabled is not None:
+            await self.set_value("stt_enabled", "1" if enabled else "0")
+        if api_key is not None:
+            await self.set_value("stt_api_key", api_key.strip())
+        if function_id is not None:
+            await self.set_value("stt_function_id", function_id.strip())
+        if uri is not None:
+            await self.set_value("stt_uri", uri.strip())
+        if language is not None:
+            await self.set_value("stt_language", language.strip())
+        return await self.get_stt_config()

@@ -18,6 +18,7 @@ from analytics.profiler import StyleProfiler
 from moderation.llm_client import LLMClient
 from moderation.profanity import ProfanityDetector
 from moderation.companion import ChatCompanion
+from moderation.stt_service import NvidiaSTTService
 from bot.middlewares.auth import UserAuthMiddleware
 from bot.middlewares.album import MediaGroupMiddleware
 from bot.handlers import (
@@ -47,6 +48,7 @@ def create_dispatcher(
     profanity_detector: Optional[ProfanityDetector] = None,
     llm_client: Optional[LLMClient] = None,
     companion: Optional[ChatCompanion] = None,
+    stt_service: Optional[NvidiaSTTService] = None,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
 
@@ -61,6 +63,8 @@ def create_dispatcher(
         dp["llm_client"] = llm_client
     if companion:
         dp["companion"] = companion
+    if stt_service:
+        dp["stt_service"] = stt_service
 
     auth_middleware = UserAuthMiddleware(db=db, settings=settings)
     dp.message.outer_middleware(auth_middleware)
@@ -104,6 +108,13 @@ async def start_application(settings: Settings) -> None:
             default_base_url=settings.LLM_BASE_URL,
             default_model=settings.LLM_MODEL,
         )
+        stt_conf = await config_repo.get_stt_config(
+            default_enabled=settings.STT_ENABLED,
+            default_api_key=settings.STT_API_KEY,
+            default_function_id=settings.STT_FUNCTION_ID,
+            default_uri=settings.STT_URI,
+            default_language=settings.STT_LANGUAGE,
+        )
 
     bot = create_bot(settings)
     queue = ForwardQueue(
@@ -136,6 +147,13 @@ async def start_application(settings: Settings) -> None:
         typing_indicator=llm_conf.get("companion_typing_indicator", True),
         random_reply_chance=llm_conf.get("companion_random_reply_chance", 0),
     )
+    stt_service = NvidiaSTTService(
+        api_key=stt_conf.get("stt_api_key", ""),
+        function_id=stt_conf.get("stt_function_id", "b702f636-f60c-4a3d-a6f4-f3568c13bd7d"),
+        uri=stt_conf.get("stt_uri", "grpc.nvcf.nvidia.com:443"),
+        language_code=stt_conf.get("stt_language", "ru-RU"),
+        enabled=stt_conf.get("stt_enabled", True),
+    )
 
     dp = create_dispatcher(
         settings=settings,
@@ -146,6 +164,7 @@ async def start_application(settings: Settings) -> None:
         profanity_detector=profanity_detector,
         llm_client=llm_client,
         companion=companion,
+        stt_service=stt_service,
     )
 
     queue.start()

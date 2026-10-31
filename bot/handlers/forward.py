@@ -8,7 +8,10 @@ from datetime import datetime, timedelta
 from typing import Any, List, Optional
 
 from aiogram import Router
-from aiogram.types import ChatPermissions, Message
+from aiogram.types import ChatPermissions, Message, CallbackQuery
+from aiogram import F
+import html
+from moderation.stt_service import NvidiaSTTService
 
 from config.settings import Settings
 from database.connection import Database
@@ -54,6 +57,7 @@ async def handle_incoming_message(
     db: Database,
     profanity_detector: Optional[ProfanityDetector] = None,
     companion: Optional[ChatCompanion] = None,
+    stt_service: Optional[NvidiaSTTService] = None,
     album_messages: Optional[List[Message]] = None,
 ) -> None:
     if isinstance(getattr(message, "migrate_to_chat_id", None), int):
@@ -79,13 +83,63 @@ async def handle_incoming_message(
         except Exception:
             pass
 
-    # Ignore commands
     msg_text = message.text or message.caption
+    raw_incoming_text = msg_text or ""
+
+    # Check for manual speech-to-text transcription request
+    lower_text = raw_incoming_text.strip().lower()
+    transcribe_triggers = {
+        "/transcribe", "/stt", "/speech", "текст", "переведи", "расшифруй",
+        "расшифровка", "что там", "что в кружке", "что в голосовом", "transcribe",
+        "что тут", "что он сказал", "что она сказала"
+    }
+    if message.reply_to_message and (lower_text in transcribe_triggers or lower_text.startswith(("/transcribe", "/stt"))):
+        replied = message.reply_to_message
+        if getattr(replied, "voice", None) or getattr(replied, "video_note", None):
+            media_obj = getattr(replied, "voice", None) or getattr(replied, "video_note", None)
+            suffix = ".oga" if getattr(replied, "voice", None) else ".mp4"
+            tag = "Голосовое" if getattr(replied, "voice", None) else "Кружок"
+            if stt_service and stt_service.is_available():
+                transcript = await stt_service.transcribe_telegram_file(
+                    bot=message.bot,
+                    file_id=media_obj.file_id,
+                    file_unique_id=media_obj.file_unique_id,
+                    suffix=suffix,
+                )
+                if transcript:
+                    await message.reply(f"📝 <b>Расшифровка ({tag}):</b>\n\n{html.escape(transcript)}", parse_mode="HTML")
+                    return
+                else:
+                    await message.reply(f"⚠️ Не удалось расшифровать {tag.lower()} (возможно тишина или сильный шум).")
+                    return
+            else:
+                await message.reply("⚠️ Распознавание речи отключено или не настроен API-ключ.")
+                return
+
+    # Ignore other slash commands
     if msg_text and msg_text.startswith("/"):
         return
 
     chat = None
     is_profane = False
+    transcribed_speech = None
+
+    has_priv_audio = bool(getattr(message, "voice", None) or getattr(message, "video_note", None))
+    if message.chat.type == "private" and has_priv_audio and stt_service and stt_service.is_available():
+        media_obj = getattr(message, "voice", None) or getattr(message, "video_note", None)
+        suffix = ".oga" if getattr(message, "voice", None) else ".mp4"
+        tag = "Голосовое" if getattr(message, "voice", None) else "Кружок"
+        try:
+            transcribed_speech = await stt_service.transcribe_telegram_file(
+                bot=message.bot,
+                file_id=media_obj.file_id,
+                file_unique_id=media_obj.file_unique_id,
+                suffix=suffix,
+            )
+            if transcribed_speech:
+                msg_text = f"🗣️ [{tag}]: {transcribed_speech}"
+        except Exception as priv_stt_err:
+            logger.warning("Private STT error: %s", priv_stt_err)
 
     if message.chat.type in ("group", "supergroup"):
         try:
@@ -100,7 +154,38 @@ async def handle_incoming_message(
                         username=message.chat.username,
                     )
                     chat = await chat_repo.get_chat(message.chat.id)
+        except Exception as e:
+            logger.warning("Could not fetch chat %s: %s", message.chat.id, e)
 
+        # Auto-transcribe audio/video_note if STT is available and enabled
+        has_group_audio = bool(getattr(message, "voice", None) or getattr(message, "video_note", None))
+        if has_group_audio and stt_service and stt_service.is_available():
+            should_stt = True
+            if chat:
+                should_stt = bool(chat.get("stt_enabled", 1))
+
+            if should_stt:
+                media_obj = getattr(message, "voice", None) or getattr(message, "video_note", None)
+                suffix = ".oga" if getattr(message, "voice", None) else ".mp4"
+                tag = "Голосовое" if getattr(message, "voice", None) else "Кружок"
+                try:
+                    transcribed_speech = await stt_service.transcribe_telegram_file(
+                        bot=message.bot,
+                        file_id=media_obj.file_id,
+                        file_unique_id=media_obj.file_unique_id,
+                        suffix=suffix,
+                    )
+                    if transcribed_speech:
+                        msg_text = f"🗣️ [{tag}]: {transcribed_speech}"
+                        if chat and chat.get("stt_auto_transcribe", 0):
+                            try:
+                                await message.reply(f"📝 <b>Расшифровка ({tag}):</b>\n\n{html.escape(transcribed_speech)}", parse_mode="HTML")
+                            except Exception as auto_err:
+                                logger.warning("Could not post auto-transcription: %s", auto_err)
+                except Exception as stt_err:
+                    logger.warning("Error during automatic STT for msg %s: %s", message.message_id, stt_err)
+
+        try:
             if chat and chat.get("profanity_filter_enabled") and profanity_detector:
                 text_to_check = MediaHandler.get_text_or_caption(message)
                 if text_to_check and text_to_check.strip():
@@ -270,6 +355,7 @@ async def handle_incoming_message(
                     message,
                     bot_username=bot_user.username,
                     bot_id=bot_user.id,
+                    override_text=transcribed_speech,
                 )
 
                 # Random reply if not triggered directly
@@ -376,3 +462,52 @@ async def handle_incoming_message(
                             logger.debug("Could not mirror companion reply to routes: %s", fwd_err)
             except Exception as e:
                 logger.warning("Error in companion handler for message %s: %s", message.message_id, e)
+
+
+@router.callback_query(F.data.startswith("stt_transcribe:"))
+async def cb_stt_transcribe(
+    callback: CallbackQuery,
+    stt_service: Optional[NvidiaSTTService] = None,
+) -> None:
+    if not stt_service or not stt_service.is_available():
+        await callback.answer("⚠️ Распознавание речи временно недоступно.", show_alert=True)
+        return
+
+    msg = callback.message
+    media_obj = None
+    suffix = ".oga"
+    tag = "Голосовое"
+    if msg:
+        if msg.voice:
+            media_obj = msg.voice
+        elif msg.video_note:
+            media_obj = msg.video_note
+            suffix = ".mp4"
+            tag = "Кружок"
+        elif msg.reply_to_message:
+            if msg.reply_to_message.voice:
+                media_obj = msg.reply_to_message.voice
+            elif msg.reply_to_message.video_note:
+                media_obj = msg.reply_to_message.video_note
+                suffix = ".mp4"
+                tag = "Кружок"
+
+    if not media_obj:
+        await callback.answer("⚠️ Аудиофайл не найден.", show_alert=True)
+        return
+
+    await callback.answer("⏳ Расшифровываю речь...")
+    try:
+        transcript = await stt_service.transcribe_telegram_file(
+            bot=callback.bot,
+            file_id=media_obj.file_id,
+            file_unique_id=media_obj.file_unique_id,
+            suffix=suffix,
+        )
+        if transcript:
+            await msg.reply(f"📝 <b>Расшифровка ({tag}):</b>\n\n{html.escape(transcript)}", parse_mode="HTML")
+        else:
+            await callback.message.reply(f"⚠️ Не удалось расшифровать {tag.lower()} (возможно тишина).")
+    except Exception as e:
+        logger.warning("Error handling stt_transcribe callback: %s", e)
+        await callback.answer("❌ Ошибка при расшифровке.", show_alert=True)

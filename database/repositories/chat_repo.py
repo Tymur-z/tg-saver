@@ -243,6 +243,8 @@ class ChatRepository(BaseRepository):
             "profanity_delete_enabled",
             "chat_ai_enabled",
             "llm_moderation_enabled",
+            "stt_enabled",
+            "stt_auto_transcribe",
         }
         if field_name not in allowed_fields:
             raise ValueError(f"Invalid chat setting field: {field_name}")

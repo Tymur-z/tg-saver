@@ -336,8 +336,9 @@ class ChatCompanion:
         message: Message,
         bot_username: Optional[str] = None,
         bot_id: Optional[int] = None,
+        override_text: Optional[str] = None,
     ) -> tuple[bool, str]:
-        raw_text = message.text or message.caption or ""
+        raw_text = override_text if override_text is not None else (message.text or message.caption or "")
         raw_text = raw_text.strip()
 
         if message.chat.type == "private":

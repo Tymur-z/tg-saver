@@ -55,10 +55,13 @@ def admin_panel_kb(is_subadmin: bool = False) -> InlineKeyboardMarkup:
                 ],
                 [
                     InlineKeyboardButton(text="🤖 Настройки ИИ (LLM)", callback_data="admin_llm_settings"),
-                    InlineKeyboardButton(text="📊 Стили участников", callback_data="admin_all_profiles"),
+                    InlineKeyboardButton(text="🎙️ Распознавание речи", callback_data="admin_stt_settings"),
                 ],
                 [
+                    InlineKeyboardButton(text="📊 Стили участников", callback_data="admin_all_profiles"),
                     InlineKeyboardButton(text="⚙️ Статус и пауза", callback_data="nav_status"),
+                ],
+                [
                     InlineKeyboardButton(text="⬅️ В главное меню", callback_data="nav_main"),
                 ],
             ]
@@ -76,13 +79,14 @@ def admin_panel_kb(is_subadmin: bool = False) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="🤖 Настройки ИИ (LLM)", callback_data="admin_llm_settings"),
+                InlineKeyboardButton(text="🎙️ Распознавание речи", callback_data="admin_stt_settings"),
+            ],
+            [
                 InlineKeyboardButton(text="🔑 Пароль доступа", callback_data="admin_password"),
-            ],
-            [
                 InlineKeyboardButton(text="📊 Стили участников", callback_data="admin_all_profiles"),
-                InlineKeyboardButton(text="⚙️ Статус и пауза", callback_data="nav_status"),
             ],
             [
+                InlineKeyboardButton(text="⚙️ Статус и пауза", callback_data="nav_status"),
                 InlineKeyboardButton(text="⬅️ В главное меню", callback_data="nav_main"),
             ],
         ]
@@ -420,10 +424,15 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
 
     warn_sec_label = f"⏱️ Автоудаление: {warn_sec}с" if warn_sec > 0 else "⏱️ Автоудаление: Выкл"
 
+    stt_on = bool(chat.get("stt_enabled", 1))
+    stt_auto = bool(chat.get("stt_auto_transcribe", 0))
+
     btn_filter = f"{'🟢' if filter_on else '⚪'} Фильтр мата"
     btn_del = f"{'🟢' if del_on else '⚪'} Удалять"
     btn_warn = f"{'🟢' if warn_on else '⚪'} Предупреждать"
     btn_ai = f"{'🟢' if ai_on else '⚪'} ИИ Ричард"
+    btn_stt = f"{'🟢' if stt_on else '⚪'} Речь (STT)"
+    btn_stt_auto = f"{'🟢' if stt_auto else '⚪'} Авто-расшифровка"
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -446,6 +455,10 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=btn_ai, callback_data=f"mod_toggle:{cid}:chat_ai_enabled"),
                 InlineKeyboardButton(text="👥 По участникам", callback_data=f"mod_users_ctx:{cid}"),
+            ],
+            [
+                InlineKeyboardButton(text=btn_stt, callback_data=f"mod_toggle:{cid}:stt_enabled"),
+                InlineKeyboardButton(text=btn_stt_auto, callback_data=f"mod_toggle:{cid}:stt_auto_transcribe"),
             ],
             [
                 InlineKeyboardButton(text="📜 Память ИИ", callback_data=f"mod_view_history:{cid}"),
@@ -747,5 +760,52 @@ def mod_user_history_kb(chat_id: int, user_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🧹 Очистить контекст этого участника", callback_data=f"mod_clear_user_ctx:{chat_id}:{user_id}")],
             [InlineKeyboardButton(text="👥 Ко всем участникам", callback_data=f"mod_users_ctx:{chat_id}")],
             [InlineKeyboardButton(text="⬅️ К настройкам чата", callback_data=f"mod_chat_view:{chat_id}")],
+        ]
+    )
+
+
+def stt_settings_kb(conf: Dict[str, Any], is_subadmin: bool = False) -> InlineKeyboardMarkup:
+    enabled = bool(conf.get("stt_enabled", True))
+    status_icon = "🟢 Включено" if enabled else "⚪ Выключено"
+    lang = conf.get("stt_language", "ru-RU")
+    lang_labels = {
+        "ru-RU": "🇷🇺 Русский (ru-RU)",
+        "multi": "🌐 Мультиязычный (multi)",
+        "en-US": "🇺🇸 Английский (en-US)",
+    }
+    lang_display = lang_labels.get(lang, lang)
+
+    buttons: List[List[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text=f"⚡ Статус: {status_icon}", callback_data="stt_toggle_enabled"),
+        ],
+        [
+            InlineKeyboardButton(text=f"🌐 Язык: {lang_display}", callback_data="stt_cycle_lang"),
+        ],
+    ]
+
+    if not is_subadmin:
+        buttons.append([
+            InlineKeyboardButton(text="🔑 Изменить API-ключ NVIDIA", callback_data="stt_set_key"),
+        ])
+
+    buttons.extend([
+        [
+            InlineKeyboardButton(text="🧪 Проверить подключение (Тест)", callback_data="stt_test"),
+            InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_stt_settings"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin"),
+        ],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def stt_transcribe_kb(file_unique_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📝 Перевести в текст (NVIDIA)", callback_data=f"stt_transcribe:{file_unique_id}"),
+            ]
         ]
     )
