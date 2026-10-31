@@ -334,24 +334,90 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
     del_on = bool(chat.get("profanity_delete_enabled", 0))
     ai_on = bool(chat.get("chat_ai_enabled", 0))
 
-    btn_filter = f"{'🟢' if filter_on else '⚪'} Фильтр матов: {'ВКЛ' if filter_on else 'ВЫКЛ'}"
-    btn_warn = f"{'⚠️' if warn_on else '⚪'} Предупреждать нарушителя: {'ВКЛ' if warn_on else 'ВЫКЛ'}"
-    btn_del = f"{'🗑️' if del_on else '⚪'} Удалять сообщение: {'ВКЛ' if del_on else 'ВЫКЛ'}"
-    btn_ai = f"{'💬' if ai_on else '⚪'} Общение с ИИ (тег/ответ): {'ВКЛ' if ai_on else 'ВЫКЛ'}"
+    strictness = chat.get("profanity_strictness", "hard")
+    strict_labels = {
+        "hard": "🤬 Hard",
+        "medium": "⚠️ Medium",
+        "all": "🛑 All",
+    }
+    strict_short = strict_labels.get(strictness, "🤬 Hard")
+
+    warn_sec = int(chat.get("profanity_delete_warn_seconds", 0))
+    warn_sec_label = f"⏱️ Варн: {warn_sec}с" if warn_sec > 0 else "⏱️ Варн: Выкл"
+
+    auto_mute = int(chat.get("auto_mute_duration", 0))
+    if auto_mute == 0:
+        mute_label = "🔇 Мут: Выкл"
+    elif auto_mute < 3600:
+        mute_label = f"🔇 Мут: {auto_mute // 60}м"
+    else:
+        mute_label = f"🔇 Мут: {auto_mute // 3600}ч"
+
+    btn_filter = f"{'🟢' if filter_on else '⚪'} Фильтр мата"
+    btn_del = f"{'🟢' if del_on else '⚪'} Удалять"
+    btn_warn = f"{'🟢' if warn_on else '⚪'} Варнить"
+    btn_ai = f"{'🟢' if ai_on else '⚪'} ИИ Ричард"
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=btn_filter, callback_data=f"mod_toggle:{cid}:profanity_filter_enabled")],
-            [InlineKeyboardButton(text=btn_warn, callback_data=f"mod_toggle:{cid}:profanity_warn_enabled")],
-            [InlineKeyboardButton(text=btn_del, callback_data=f"mod_toggle:{cid}:profanity_delete_enabled")],
-            [InlineKeyboardButton(text=btn_ai, callback_data=f"mod_toggle:{cid}:chat_ai_enabled")],
-            [InlineKeyboardButton(text="⬅️ К списку чатов", callback_data="admin_moderation_chats")],
+            [
+                InlineKeyboardButton(text=btn_filter, callback_data=f"mod_toggle:{cid}:profanity_filter_enabled"),
+                InlineKeyboardButton(text=btn_del, callback_data=f"mod_toggle:{cid}:profanity_delete_enabled"),
+            ],
+            [
+                InlineKeyboardButton(text=btn_warn, callback_data=f"mod_toggle:{cid}:profanity_warn_enabled"),
+                InlineKeyboardButton(text=warn_sec_label, callback_data=f"mod_autodel_cycle:{cid}"),
+            ],
+            [
+                InlineKeyboardButton(text=f"🎯 Строгость: {strict_short}", callback_data=f"mod_select_strictness:{cid}"),
+                InlineKeyboardButton(text=mute_label, callback_data=f"mod_automute_cycle:{cid}"),
+            ],
+            [
+                InlineKeyboardButton(text="🚫 Стоп-слова", callback_data=f"mod_custom_words:{cid}"),
+                InlineKeyboardButton(text="⚪ Белый список", callback_data=f"mod_wl_menu:{cid}"),
+            ],
+            [
+                InlineKeyboardButton(text=btn_ai, callback_data=f"mod_toggle:{cid}:chat_ai_enabled"),
+                InlineKeyboardButton(text="📜 Память ИИ", callback_data=f"mod_view_history:{cid}"),
+            ],
+            [
+                InlineKeyboardButton(text="🧹 Очистить память чата", callback_data=f"mod_clear_mem:{cid}"),
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Обновить", callback_data=f"mod_chat_view:{cid}"),
+                InlineKeyboardButton(text="⬅️ К списку чатов", callback_data="admin_moderation_chats"),
+            ],
         ]
     )
 
 
-def llm_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
+def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None) -> InlineKeyboardMarkup:
+    conf = conf or {}
     toggle_text = "🟢 ИИ: ВКЛЮЧЕН (нажмите для откл.)" if is_enabled else "⚪ ИИ: ОТКЛЮЧЕН (нажмите для вкл.)"
+
+    ctx = conf.get("companion_context_limit", 15)
+    toks = conf.get("companion_max_tokens", 800)
+    temp = conf.get("companion_temperature", 0.7)
+
+    persona = conf.get("companion_persona", "student")
+    p_labels = {
+        "student": "🎓 Студент",
+        "expert": "💼 Эксперт",
+        "sarcastic": "😈 Дерзкий",
+        "concise": "⚡ Краткий",
+        "custom": "✍️ Свой",
+    }
+    p_text = p_labels.get(persona, "🎓 Студент")
+
+    trigger = conf.get("companion_trigger_mode", "name_and_reply")
+    trig_text = "🗣️ Имя+Реплай" if trigger == "name_and_reply" else "📢 Все теги"
+
+    typing_on = conf.get("companion_typing_indicator", True)
+    typing_text = "🟢 «Печатает...»" if typing_on else "⚪ «Печатает...»"
+
+    rand_chance = conf.get("companion_random_reply_chance", 0)
+    rand_text = f"🎲 Рандом: {rand_chance}%" if rand_chance > 0 else "🎲 Рандом: Выкл"
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=toggle_text, callback_data="llm_toggle_enabled")],
@@ -364,13 +430,25 @@ def llm_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🧪 Проверить связь", callback_data="llm_test_ping"),
             ],
             [
-                InlineKeyboardButton(text="📚 Контекст чата", callback_data="llm_select_context"),
-                InlineKeyboardButton(text="📝 Длина ответа", callback_data="llm_select_tokens"),
+                InlineKeyboardButton(text=f"📚 Контекст: {ctx} сообщ.", callback_data="llm_select_context"),
+                InlineKeyboardButton(text=f"📝 Ответ: {toks} tok", callback_data="llm_select_tokens"),
             ],
             [
-                InlineKeyboardButton(text="🌡️ Креативность (Temp)", callback_data="llm_select_temp"),
+                InlineKeyboardButton(text=f"🌡️ Temp: {temp}", callback_data="llm_select_temp"),
+                InlineKeyboardButton(text=f"🎭 Персона: {p_text}", callback_data="llm_select_persona"),
             ],
-            [InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin")],
+            [
+                InlineKeyboardButton(text=f"🎯 Реакция: {trig_text}", callback_data="llm_select_trigger"),
+                InlineKeyboardButton(text=typing_text, callback_data="llm_toggle_typing"),
+            ],
+            [
+                InlineKeyboardButton(text=rand_text, callback_data="llm_cycle_random"),
+                InlineKeyboardButton(text="🧹 Очистить всю память", callback_data="llm_clear_all_mem"),
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_llm_settings"),
+                InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin"),
+            ],
         ]
     )
 
@@ -540,5 +618,14 @@ def llm_trigger_select_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🗣️ Только имя («Ричард») и реплай", callback_data="llm_set_trigger:name_and_reply")],
             [InlineKeyboardButton(text="📢 Все упоминания (@RichardHelperBot + имя + реплай)", callback_data="llm_set_trigger:all")],
             [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
+        ]
+    )
+
+
+def mod_history_kb(cid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🧹 Очистить память для этого чата", callback_data=f"mod_clear_mem:{cid}")],
+            [InlineKeyboardButton(text="⬅️ Назад к настройкам чата", callback_data=f"mod_chat_view:{cid}")],
         ]
     )

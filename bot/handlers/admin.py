@@ -32,6 +32,7 @@ from bot.keyboards.inline import (
     mod_custom_words_kb,
     mod_strictness_select_kb,
     mod_whitelist_kb,
+    mod_history_kb,
     llm_persona_select_kb,
     llm_trigger_select_kb,
     main_menu_kb,
@@ -582,54 +583,9 @@ async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_ad
     async with db.connect() as conn:
         chat_repo = ChatRepository(conn)
         await chat_repo.toggle_setting(chat_id, field_name)
-        chat = await chat_repo.get_chat(chat_id)
 
-    if not chat:
-        await callback.answer("❌ Ошибка обновления.", show_alert=True)
-        return
-
-    title = chat.get("title") or f"ID {chat_id}"
-    c_type = chat.get("chat_type", "group")
-    import json
-    f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
-    w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
-    d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
-    ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
-    strictness = chat.get("profanity_strictness", "hard")
-    if strictness == "hard":
-        strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон)"
-    elif strictness == "medium":
-        strictness_desc = "⚠️ Жесткий мат + грубые слова (урод, дебил)"
-    else:
-        strictness_desc = "🛑 Максимальная строгость (+ блин, тупой)"
-
-    raw_cw = chat.get("custom_profanity_words", "[]")
-    try:
-        cw_list = json.loads(raw_cw) if isinstance(raw_cw, str) else (raw_cw or [])
-    except Exception:
-        cw_list = []
-    cw_desc = f"<code>{', '.join(cw_list[:5])}</code>" if cw_list else "<i>нет</i>"
-    if len(cw_list) > 5:
-        cw_desc += f" <i>(+еще {len(cw_list)-5})</i>"
-
-    div = "━━━━━━━━━━━━━━━━━━━━━━"
-
-    lines = [
-        f"🛡️ <b>Настройки чата:</b> {title}",
-        f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
-        "🛡️ <b>Модерация ненормативной лексики:</b>",
-        f"• Фильтр матов: {f_on}",
-        f"• Режим строгости: <b>{strictness_desc}</b>",
-        f"• Свои стоп-слова: {cw_desc}",
-        f"• Предупреждать нарушителя: {w_on}",
-        f"• Удалять сообщения с матом: {d_on}\n{div}",
-        "💬 <b>Режим ИИ-собеседника:</b>",
-        f"• Ответ на теги и Reply: {ai_on}\n{div}",
-        "👇 <i>Нажмите на кнопку ниже для настройки:</i>",
-    ]
-    text = "\n".join(lines)
-    await callback.message.edit_text(text, reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
     await callback.answer("✅ Настройка обновлена")
+    await cb_chat_moderation_view(callback, db, is_admin=is_admin)
 
 
 class AdminLLMStates(StatesGroup):
@@ -730,7 +686,7 @@ async def cmd_admin_llm_settings(
     async with db.connect() as conn:
         text, is_on, conf = await _render_llm_settings(conn, settings)
 
-    kb = llm_settings_kb(is_on)
+    kb = llm_settings_kb(is_on, conf)
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         await event.answer()
@@ -1041,48 +997,9 @@ async def cb_mod_set_strict(callback: CallbackQuery, db: Database, is_admin: boo
     async with db.connect() as conn:
         chat_repo = ChatRepository(conn)
         await chat_repo.set_strictness(chat_id, strictness)
-        chat = await chat_repo.get_chat(chat_id)
 
-    title = chat.get("title") or f"ID {chat_id}"
-    c_type = chat.get("chat_type", "group")
-    f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
-    w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
-    d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
-    ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
-
-    if strictness == "hard":
-        strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон)"
-    elif strictness == "medium":
-        strictness_desc = "⚠️ Жесткий мат + грубые слова (урод, дебил)"
-    else:
-        strictness_desc = "🛑 Максимальная строгость (+ блин, тупой)"
-
-    import json
-    raw_cw = chat.get("custom_profanity_words", "[]")
-    try:
-        cw_list = json.loads(raw_cw) if isinstance(raw_cw, str) else (raw_cw or [])
-    except Exception:
-        cw_list = []
-    cw_desc = f"<code>{', '.join(cw_list[:5])}</code>" if cw_list else "<i>нет</i>"
-    if len(cw_list) > 5:
-        cw_desc += f" <i>(+еще {len(cw_list)-5})</i>"
-
-    div = "━━━━━━━━━━━━━━━━━━━━━━"
-    lines = [
-        f"🛡️ <b>Настройки чата:</b> {title}",
-        f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
-        "🛡️ <b>Модерация ненормативной лексики:</b>",
-        f"• Фильтр матов: {f_on}",
-        f"• Режим строгости: <b>{strictness_desc}</b>",
-        f"• Свои стоп-слова: {cw_desc}",
-        f"• Предупреждать нарушителя: {w_on}",
-        f"• Удалять сообщения с матом: {d_on}\n{div}",
-        "💬 <b>Режим ИИ-собеседника:</b>",
-        f"• Ответ на теги и Reply: {ai_on}\n{div}",
-        "👇 <i>Нажмите на кнопку ниже для настройки:</i>",
-    ]
-    await callback.message.edit_text("\n".join(lines), reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
     await callback.answer("Строгость сохранена")
+    await cb_chat_moderation_view(callback, db, is_admin=is_admin)
 
 
 @router.callback_query(F.data.startswith("mod_custom_words:"))
@@ -1458,6 +1375,7 @@ async def cb_mod_clear_mem(
     if companion:
         companion.context_buffer.clear(cid)
     await callback.answer("Память диалогов для этого чата очищена!", show_alert=True)
+    await cb_chat_moderation_view(callback, db, is_admin=is_admin)
 
 
 @router.callback_query(F.data.startswith("mod_wl_menu:"))
@@ -1716,3 +1634,41 @@ async def cb_llm_clear_all_mem(
     if companion:
         companion.context_buffer._buffers.clear()
     await callback.answer("Вся память диалогов Ричарда во всех чатах очищена!", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("mod_view_history:"))
+async def cb_mod_view_history(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    cid = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        history = await ChatRepository(conn).get_companion_history(cid, limit=12)
+
+    if not history:
+        text = (
+            f"📜 <b>Память диалогов Ричарда в чате #{cid}:</b>\n\n"
+            "<i>(История пуста — Ричард пока не общался в этом чате или память была очищена)</i>"
+        )
+    else:
+        div = "━━━━━━━━━━━━━━━━━━━━━━"
+        lines = [
+            f"📜 <b>Память диалогов Ричарда в чате #{cid}:</b>",
+            f"<i>Показаны последние {len(history)} реплик из базы данных:</i>",
+            div,
+        ]
+        for msg in history:
+            is_bot = bool(msg.get("is_bot"))
+            sender = "🤖 Ричард" if is_bot else (msg.get("user_name") or f"ID {msg.get('user_id')}")
+            uname = f" (@{msg['username']})" if msg.get("username") and not is_bot else ""
+            txt = (msg.get("text") or "").strip()
+            if len(txt) > 100:
+                txt = txt[:97] + "..."
+            lines.append(f"• <b>{sender}{uname}:</b> {txt}")
+        lines.append(div)
+        lines.append("💡 <i>Вы можете очистить память для этого чата кнопкой ниже:</i>")
+        text = "\n".join(lines)
+
+    await callback.message.edit_text(text, reply_markup=mod_history_kb(cid), parse_mode="HTML")
+    await callback.answer()
