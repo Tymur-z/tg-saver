@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -521,8 +522,21 @@ async def cb_main_menu(callback: CallbackQuery, is_admin: bool = False) -> None:
     )
     await callback.answer()
 
+async def check_user_in_chat(bot, chat_id: int, user_id: int) -> bool:
+    if not bot or not user_id or not chat_id:
+        return False
+    try:
+        member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+        status = getattr(member, "status", None)
+        return status in ("creator", "administrator", "member") or (
+            status == "restricted" and getattr(member, "is_member", True)
+        )
+    except Exception:
+        return False
+
+
 @router.message(Command("moderation"))
-async def cmd_admin_moderation_chats(event: Message | CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cmd_admin_moderation_chats(event: Message | CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin:
         if isinstance(event, CallbackQuery):
             await event.answer("⚠️ Доступ разрешен только администраторам.", show_alert=True)
@@ -532,35 +546,58 @@ async def cmd_admin_moderation_chats(event: Message | CallbackQuery, db: Databas
         chat_repo = ChatRepository(conn)
         chats = await chat_repo.list_moderation_chats()
 
+    caller_id = event.from_user.id if event.from_user else 0
+    bot = event.bot
+    if is_subadmin and caller_id and bot:
+        membership_results = await asyncio.gather(
+            *[check_user_in_chat(bot, c.get("chat_id"), caller_id) for c in chats],
+            return_exceptions=True,
+        )
+        chats = [c for c, is_mem in zip(chats, membership_results) if is_mem is True]
+
     lines = [
         "🛡️ <b>Модерация ненормативной лексики (ИИ и фильтры)</b>\n",
         "Выберите группу или супергруппу для настройки параметров модерации:",
         "• 🟢 — фильтр матов включен (гибридный анализ: регулярные шаблоны + нейросеть)",
         "• ⚠️ — отправка предупреждений нарушителям в чате",
         "• 🗑️ — автоматическое удаление нецензурных сообщений\n",
-        f"Всего групп и каналов в системе: <b>{len(chats)}</b>",
     ]
+    if is_subadmin:
+        lines.append(f"Доступных вам групп для модерации: <b>{len(chats)}</b>")
+        if not chats:
+            lines.append("\n<i>Вы не состоите ни в одной из подключенных групп бота.</i>")
+    else:
+        lines.append(f"Всего групп и каналов в системе: <b>{len(chats)}</b>")
+
     text = "\n".join(lines)
     kb = moderation_chats_list_kb(chats)
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await event.answer()
+        try:
+            await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest:
+            pass
+        await event.answer("🔄 Список чатов обновлен")
     else:
         await event.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "admin_moderation_chats")
-async def cb_admin_moderation_chats(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
-    await cmd_admin_moderation_chats(callback, db=db, is_admin=is_admin)
+async def cb_admin_moderation_chats(callback: CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    await cmd_admin_moderation_chats(callback, db=db, is_admin=is_admin, is_subadmin=is_subadmin)
 
 
 @router.callback_query(F.data.startswith("mod_chat_view:"))
-async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin:
         await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
         return
 
     chat_id = int(callback.data.split(":")[1])
+    if is_subadmin:
+        caller_id = callback.from_user.id if callback.from_user else 0
+        if not await check_user_in_chat(callback.bot, chat_id, caller_id):
+            await callback.answer("⛔ Вы можете модерировать только те группы, в которых состоите.", show_alert=True)
+            return
     async with db.connect() as conn:
         chat_repo = ChatRepository(conn)
         chat = await chat_repo.get_chat(chat_id)
@@ -634,7 +671,7 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
 
 
 @router.callback_query(F.data.startswith("mod_toggle:"))
-async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin:
         await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
         return
@@ -642,6 +679,12 @@ async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_ad
     parts = callback.data.split(":")
     chat_id = int(parts[1])
     field_name = parts[2]
+
+    if is_subadmin:
+        caller_id = callback.from_user.id if callback.from_user else 0
+        if not await check_user_in_chat(callback.bot, chat_id, caller_id):
+            await callback.answer("⛔ Вы можете модерировать только те группы, в которых состоите.", show_alert=True)
+            return
 
     async with db.connect() as conn:
         chat_repo = ChatRepository(conn)

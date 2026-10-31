@@ -173,3 +173,56 @@ async def test_system_bot_anonymous_excluded_from_users(test_db: Database) -> No
         user_ids = [u["user_id"] for u in users]
         assert 1087968824 not in user_ids
         assert 123456 in user_ids
+
+
+
+@pytest.mark.asyncio
+async def test_subadmin_moderation_filtered_by_membership(test_db: Database) -> None:
+    from database.repositories.chat_repo import ChatRepository
+    from bot.handlers.admin import cmd_admin_moderation_chats, cb_chat_moderation_view
+
+    async with test_db.connect() as conn:
+        repo = ChatRepository(conn)
+        await repo.ensure_chat_exists(chat_id=-100111, title="Member Group", chat_type="supergroup")
+        await repo.ensure_chat_exists(chat_id=-100222, title="Other Group", chat_type="supergroup")
+
+    bot = MagicMock()
+
+    async def mock_get_chat_member(chat_id: int, user_id: int):
+        member = MagicMock()
+        if chat_id == -100111:
+            member.status = "member"
+            return member
+        else:
+            member.status = "left"
+            return member
+
+    bot.get_chat_member = AsyncMock(side_effect=mock_get_chat_member)
+
+    # Subadmin opens /moderation
+    subadmin_cb = MagicMock(spec=CallbackQuery)
+    subadmin_cb.from_user = MagicMock(id=6205547383)
+    subadmin_cb.bot = bot
+    subadmin_cb.answer = AsyncMock()
+    subadmin_cb.message = MagicMock()
+    subadmin_cb.message.edit_text = AsyncMock()
+
+    await cmd_admin_moderation_chats(subadmin_cb, test_db, is_admin=True, is_subadmin=True)
+
+    # Check edit_text call
+    call_args = subadmin_cb.message.edit_text.call_args
+    assert "Доступных вам групп для модерации: <b>1</b>" in call_args[0][0]
+    kb = call_args[1]["reply_markup"]
+    chat_btns = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("Member Group" in b for b in chat_btns)
+    assert not any("Other Group" in b for b in chat_btns)
+
+    # Subadmin tries to view the other group directly
+    other_cb = MagicMock(spec=CallbackQuery)
+    other_cb.data = "mod_chat_view:-100222"
+    other_cb.from_user = MagicMock(id=6205547383)
+    other_cb.bot = bot
+    other_cb.answer = AsyncMock()
+
+    await cb_chat_moderation_view(other_cb, test_db, is_admin=True, is_subadmin=True)
+    other_cb.answer.assert_called_with("⛔ Вы можете модерировать только те группы, в которых состоите.", show_alert=True)
