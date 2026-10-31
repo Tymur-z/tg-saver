@@ -196,7 +196,7 @@ class ChatContextBuffer:
 def format_companion_html(text: str) -> str:
     """
     Converts LLM markdown formatting into safe, properly rendered Telegram HTML.
-    Prevents markdown leaks like ### or raw unrendered asterisks.
+    Prevents markdown leaks like ###, unclosed tags, or raw unrendered asterisks.
     """
     if not text:
         return ""
@@ -239,15 +239,21 @@ def format_companion_html(text: str) -> str:
     for i, h in enumerate(headers):
         t = t.replace(f"\x00HEADER_{i}\x00", f"<b>{html.escape(h)}</b>")
 
-    # 7. Restore code blocks
-    for i, code in enumerate(code_blocks):
-        escaped_code = html.escape(code.strip())
-        t = t.replace(f"\x00CODE_{i}\x00", f"<pre><code>{escaped_code}</code></pre>")
+    # 7. Restore inline code and code blocks with HTML escaping
+    for i, ic in enumerate(inline_codes):
+        t = t.replace(f"\x00INLINE_{i}\x00", f"<code>{html.escape(ic)}</code>")
+    for i, cb in enumerate(code_blocks):
+        t = t.replace(f"\x00CODE_{i}\x00", f"<pre><code>{html.escape(cb.strip())}</code></pre>")
 
-    # 8. Restore inline codes
-    for i, code in enumerate(inline_codes):
-        escaped_code = html.escape(code.strip())
-        t = t.replace(f"\x00INLINE_{i}\x00", f"<code>{escaped_code}</code>")
+    # 8. Clean up any leftover unmatched asterisks / hashes
+    t = t.replace("**", "").replace("###", "").replace("##", "")
+
+    # 9. Ensure open tags are closed (prevent TelegramBadRequest)
+    for tag in ("b", "i", "code", "pre"):
+        open_count = t.count(f"<{tag}>")
+        close_count = t.count(f"</{tag}>")
+        if open_count > close_count:
+            t += f"</{tag}>" * (open_count - close_count)
 
     return t
 

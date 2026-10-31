@@ -179,7 +179,7 @@ async def cmd_admin_users(event: Message | CallbackQuery, db: Database, is_admin
 
 
 @router.callback_query(F.data.startswith("user_view:"))
-async def cb_user_view(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cb_user_view(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin:
         return
     await callback.answer()
@@ -221,7 +221,7 @@ async def cb_user_view(callback: CallbackQuery, db: Database, is_admin: bool = F
 
 
 @router.callback_query(F.data.startswith("user_block:"))
-async def cb_user_block(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False) -> None:
+async def cb_user_block(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin:
         return
     target_id = int(callback.data.split(":")[1])
@@ -240,11 +240,11 @@ async def cb_user_block(callback: CallbackQuery, db: Database, settings: Setting
         await user_repo.set_blocked(target_id, True)
 
     await callback.answer("🚫 Пользователь заблокирован!", show_alert=True)
-    await cb_user_view(callback, db, is_admin=True)
+    await cb_user_view(callback, db, settings=settings, is_admin=True, is_subadmin=is_subadmin)
 
 
 @router.callback_query(F.data.startswith("user_unblock:"))
-async def cb_user_unblock(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cb_user_unblock(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin:
         return
     target_id = int(callback.data.split(":")[1])
@@ -253,11 +253,11 @@ async def cb_user_unblock(callback: CallbackQuery, db: Database, is_admin: bool 
         await user_repo.set_blocked(target_id, False)
 
     await callback.answer("✅ Пользователь разблокирован!", show_alert=True)
-    await cb_user_view(callback, db, is_admin=True)
+    await cb_user_view(callback, db, settings=settings, is_admin=True, is_subadmin=is_subadmin)
 
 
 @router.callback_query(F.data.startswith("user_role:"))
-async def cb_user_role(callback: CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
+async def cb_user_role(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin or is_subadmin:
         await callback.answer("⛔ Изменение ролей доступно только старшему администратору.", show_alert=True)
         return
@@ -270,11 +270,11 @@ async def cb_user_role(callback: CallbackQuery, db: Database, is_admin: bool = F
         await user_repo.set_role(target_id, new_role)
 
     await callback.answer(f"Роль изменена на: {new_role}!", show_alert=True)
-    await cb_user_view(callback, db, is_admin=True)
+    await cb_user_view(callback, db, settings=settings, is_admin=True, is_subadmin=is_subadmin)
 
 
 @router.callback_query(F.data.startswith("user_reset_auth:"))
-async def cb_user_reset_auth(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False) -> None:
+async def cb_user_reset_auth(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False, is_subadmin: bool = False) -> None:
     if not is_admin:
         return
     target_id = int(callback.data.split(":")[1])
@@ -286,7 +286,7 @@ async def cb_user_reset_auth(callback: CallbackQuery, db: Database, settings: Se
         await user_repo.set_authorized(target_id, False)
 
     await callback.answer("🔑 Авторизация сброшена. Пользователь должен ввести пароль повторно.", show_alert=True)
-    await cb_user_view(callback, db, is_admin=True)
+    await cb_user_view(callback, db, settings=settings, is_admin=True, is_subadmin=is_subadmin)
 
 
 @router.message(Command("all_routes"))
@@ -638,7 +638,7 @@ class AdminModStates(StatesGroup):
     waiting_for_whitelist_words = State()
 
 
-async def _render_llm_settings(conn, settings: Settings) -> tuple[str, bool, dict]:
+async def _render_llm_settings(conn, settings: Settings, is_subadmin: bool = False) -> tuple[str, bool, dict]:
     config_repo = ConfigRepository(conn)
     conf = await config_repo.get_llm_config(
         default_enabled=settings.LLM_ENABLED,
@@ -1746,13 +1746,15 @@ async def cb_llm_select_random(callback: CallbackQuery, db: Database, is_admin: 
     rand_chance = curr.get("companion_random_reply_chance", 0)
 
     text = (
-        "💬 <b>Случайные реплики Ричарда (Инициатива в беседе):</b>\n\n"
-        "Определяет, с какой вероятностью Ричард будет <b>сам вступать в диалог участников</b> без прямого обращения по имени и без Reply:\n\n"
-        "• ⚪ <b>Выключено (0%)</b> — Ричард отвечает ТОЛЬКО когда его зовут по имени («Ричард») или делают Reply\n"
-        "• 🟢 <b>Редко (2%)</b> — ненавязчивое участие (~ 1 ответ на 50 сообщений)\n"
-        "• 🟡 <b>Умеренно (5%)</b> — живой сокурсник (~ 1 ответ на 20 сообщений)\n"
-        "• 🟠 <b>Активно (10%)</b> — активный собеседник (~ 1 ответ на 10 сообщений)\n"
-        "• ✏️ <b>Задать свой %</b> — точная настройка от 1% до 50%\n\n"
+        "🎲 <b>Спонтанные реплики Ричарда в групповых чатах:</b>\n\n"
+        "Определяет, с какой вероятностью Ричард будет <b>сам вступать в разговор участников</b> без прямого обращения по имени и без Reply:\n\n"
+        "• ⚪ <b>0% (Выключено)</b> — Ричард отвечает ТОЛЬКО когда его зовут по имени («Ричард») или делают Reply\n"
+        "• 🟢 <b>1% (Очень редко)</b> — ~1 реплика на 100 сообщений\n"
+        "• 🟢 <b>3% (Редко)</b> — ~1 реплика на 30 сообщений\n"
+        "• 🟡 <b>5% (Умеренно)</b> — живой участник (~1 на 20 сообщений)\n"
+        "• 🟠 <b>10% (Активно)</b> — ~1 реплика на 10 сообщений\n"
+        "• 🔴 <b>20% (Часто)</b> — активный участник беседы\n"
+        "• ✏️ <b>Свой %</b> — точная настройка от 0% до 50%\n\n"
         f"Текущая вероятность: <b>{rand_chance}%</b>"
     )
     await callback.message.edit_text(text, reply_markup=llm_random_select_kb(rand_chance), parse_mode="HTML")
@@ -1775,14 +1777,25 @@ async def cb_llm_set_random(
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(random_reply_chance=val)
-        text, is_on, conf = await _render_llm_settings(conn, settings)
 
     if companion:
         companion.update_config(random_reply_chance=val)
 
-    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
+    text = (
+        "🎲 <b>Спонтанные реплики Ричарда в групповых чатах:</b>\n\n"
+        "Определяет, с какой вероятностью Ричард будет <b>сам вступать в разговор участников</b> без прямого обращения по имени и без Reply:\n\n"
+        "• ⚪ <b>0% (Выключено)</b> — Ричард отвечает ТОЛЬКО когда его зовут по имени («Ричард») или делают Reply\n"
+        "• 🟢 <b>1% (Очень редко)</b> — ~1 реплика на 100 сообщений\n"
+        "• 🟢 <b>3% (Редко)</b> — ~1 реплика на 30 сообщений\n"
+        "• 🟡 <b>5% (Умеренно)</b> — живой участник (~1 на 20 сообщений)\n"
+        "• 🟠 <b>10% (Активно)</b> — ~1 реплика на 10 сообщений\n"
+        "• 🔴 <b>20% (Часто)</b> — активный участник беседы\n"
+        "• ✏️ <b>Свой %</b> — точная настройка от 0% до 50%\n\n"
+        f"Текущая вероятность: <b>{val}%</b>"
+    )
+    await callback.message.edit_text(text, reply_markup=llm_random_select_kb(val), parse_mode="HTML")
     desc = f"{val}%" if val > 0 else "Выключено"
-    await callback.answer(f"Инициатива в чате: {desc}")
+    await callback.answer(f"✅ Установлено: {desc}")
 
 
 @router.callback_query(F.data == "llm_custom_random")

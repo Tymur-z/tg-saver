@@ -408,7 +408,7 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
     strict_short = strict_labels.get(strictness, "🤬 Hard")
 
     warn_sec = int(chat.get("profanity_delete_warn_seconds", 0))
-    warn_sec_label = f"⏱️ Варн: {warn_sec}с" if warn_sec > 0 else "⏱️ Варн: Выкл"
+    warn_sec_label = f"⏱️ Автоудаление: {warn_sec}с" if warn_sec > 0 else "⏱️ Автоудаление: Выкл"
 
     auto_mute = int(chat.get("auto_mute_duration", 0))
     if auto_mute == 0:
@@ -418,7 +418,7 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
     else:
         mute_label = f"🔇 Мут: {auto_mute // 3600}ч"
 
-    warn_sec_label = f"⏱️ Срок варна: {warn_sec}с" if warn_sec > 0 else "⏱️ Срок варна: Выкл"
+    warn_sec_label = f"⏱️ Автоудаление: {warn_sec}с" if warn_sec > 0 else "⏱️ Автоудаление: Выкл"
 
     btn_filter = f"{'🟢' if filter_on else '⚪'} Фильтр мата"
     btn_del = f"{'🟢' if del_on else '⚪'} Удалять"
@@ -484,7 +484,7 @@ def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None, is_
     typing_text = "🟢 «Печатает...»" if typing_on else "⚪ «Печатает...»"
 
     rand_chance = conf.get("companion_random_reply_chance", 0)
-    rand_text = f"💬 Инициатива: {rand_chance}%" if rand_chance > 0 else "💬 Инициатива: Выкл"
+    rand_text = f"🎲 Спонтанные ответы: {rand_chance}%" if rand_chance > 0 else "🎲 Спонтанные ответы: Выкл"
 
     if is_subadmin:
         llm_top_rows = [
@@ -714,14 +714,16 @@ def mod_history_kb(cid: int) -> InlineKeyboardMarkup:
 def llm_random_select_kb(curr_val: int = 0) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=f"{'✅ ' if curr_val == 0 else ''}⚪ Выкл (только тег/реплай)", callback_data="llm_set_random:0")],
+            [InlineKeyboardButton(text=f"{'✅ ' if curr_val == 0 else ''}⚪ 0% (Выкл — только по имени/реплаю)", callback_data="llm_set_random:0")],
             [
-                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 2 else ''}🟢 Редко (2%)", callback_data="llm_set_random:2"),
-                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 5 else ''}🟡 Умеренно (5%)", callback_data="llm_set_random:5"),
+                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 1 else ''}🟢 1%", callback_data="llm_set_random:1"),
+                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 3 else ''}🟢 3%", callback_data="llm_set_random:3"),
+                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 5 else ''}🟡 5%", callback_data="llm_set_random:5"),
             ],
             [
-                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 10 else ''}🟠 Активно (10%)", callback_data="llm_set_random:10"),
-                InlineKeyboardButton(text="✏️ Задать свой %", callback_data="llm_custom_random"),
+                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 10 else ''}🟠 10%", callback_data="llm_set_random:10"),
+                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 20 else ''}🔴 20%", callback_data="llm_set_random:20"),
+                InlineKeyboardButton(text="✏️ Свой %", callback_data="llm_custom_random"),
             ],
             [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
         ]

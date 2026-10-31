@@ -148,6 +148,7 @@ class ChatRepository(BaseRepository):
         super_titles = {(c.get("title") or "").strip().lower() for c in all_chats if c.get("chat_type") in ("supergroup", "channel")}
         
         seen_ids = set()
+        seen_titles = set()
         deduped = []
         for c in all_chats:
             cid = c.get("chat_id")
@@ -157,7 +158,11 @@ class ChatRepository(BaseRepository):
             title_norm = (c.get("title") or "").strip().lower()
             if ctype == "group" and title_norm in super_titles:
                 continue
+            if title_norm and title_norm in seen_titles:
+                continue
             seen_ids.add(cid)
+            if title_norm:
+                seen_titles.add(title_norm)
             deduped.append(c)
         return deduped
 

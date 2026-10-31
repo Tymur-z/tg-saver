@@ -274,7 +274,7 @@ async def handle_incoming_message(
 
                 # Random reply if not triggered directly
                 if not triggered and message.chat.type in ("group", "supergroup") and msg_text:
-                    if companion.random_reply_chance > 0 and len(msg_text) >= 10:
+                    if companion.random_reply_chance > 0 and len(msg_text) >= 2:
                         if random.randint(1, 100) <= companion.random_reply_chance:
                             triggered = True
                             prompt = msg_text
@@ -312,7 +312,25 @@ async def handle_incoming_message(
                     extra_context = ""
                     if target_user_match:
                         target_nick = target_user_match.group(1).strip()
-                        if target_nick.lower() not in ("ты", "ричард", "richard", "you"):
+                        bot_names = {"ты", "ричард", "richard", "you"}
+                        if bot_user.username:
+                            bot_names.add(bot_user.username.lower())
+                        if bot_user.first_name:
+                            bot_names.add(bot_user.first_name.lower())
+
+                        if target_nick.lower() in bot_names:
+                            try:
+                                async with db.connect() as conn:
+                                    cursor = await conn.execute(
+                                        "SELECT * FROM companion_chat_history WHERE chat_id = ? AND is_bot = 1 ORDER BY id DESC LIMIT 1",
+                                        (message.chat.id,),
+                                    )
+                                    row = await cursor.fetchone()
+                                    if row:
+                                        extra_context = f"[Справка из базы данных чата: твоё (Ричард) предыдущее сообщение в этом чате было: \"{row['text']}\"]"
+                            except Exception:
+                                pass
+                        else:
                             try:
                                 async with db.connect() as conn:
                                     last_msg = await ChatRepository(conn).get_last_message_from_user(message.chat.id, target_nick)
@@ -348,7 +366,9 @@ async def handle_incoming_message(
                             sent_reply = await message.reply(formatted_reply, parse_mode="HTML")
                         except Exception as html_err:
                             logger.debug("Could not send reply with HTML parse_mode: %s, falling back to plain", html_err)
-                            sent_reply = await message.reply(reply_text, parse_mode=None)
+                            clean_plain = re.sub(r'^(?:#{1,6})\s*', '', reply_text, flags=re.MULTILINE)
+                            clean_plain = clean_plain.replace('**', '').replace('__', '')
+                            sent_reply = await message.reply(clean_plain, parse_mode=None)
                         # Mirror reply to destination chats if active routes exist
                         try:
                             await forward_engine.process_incoming_message(sent_reply)
