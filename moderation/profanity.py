@@ -1,4 +1,4 @@
-"""Модуль обнаружения ненормативной лексики и оскорблений с поддержкой уровней строгости."""
+"""Модуль обнаружения ненормативной лексики и оскорблений с поддержкой 3 уровней строгости и пользовательских стоп-слов."""
 
 from __future__ import annotations
 
@@ -19,17 +19,19 @@ class ProfanityResult:
     method: str
     reason: str
     confidence: float
-    severity: str = "hard"  # "hard" or "mild"
+    severity: str = "hard"  # "hard", "medium", "mild", "custom"
 
 
 class ProfanityDetector:
     """
     Детектор ненормативной лексики:
-    - Защита от обходов: подмена похожих букв (латиница/кириллица, homoglyphs, leetspeak, 0->o, 1->i, 3->з, 4->ч, @->а, $->с),
+    - Защита от обходов: подмена букв (латиница/кириллица, омоглифы, leetspeak, 0->o, 1->i, 3->з, 4->ч, @->а, $->с),
       невидимые символы (zero-width spaces), точки/пробелы между буквами, повторы букв ('сууукааа').
-    - Уровни строгости (strictness):
-        'hard' — только тяжелый мат (сука, пидор, хуй, пизда, ебать, блядь, гандон и их производные/маскировки).
-        'all'  — тяжелый мат + легкая брань, оскорбления и токсичные слова (тупой, даун, блин, урод, дебил, дурак и т.д.).
+    - 3 уровня строгости (strictness):
+        'hard'   — только тяжелый мат (сука, пидор, гандон, хуй, пизда, ебать, блядь и их производные/маскировки).
+        'medium' — тяжелый мат + грубые оскорбления (урод, тварь, мразь, дебил, даун, гнида).
+        'all'    — максимальная строгость (+ легкая брань и обзывательства: блин, тупой, дурак, чмо, лох, идиот).
+    - Пользовательские стоп-слова (custom_words) для каждого чата.
     """
 
     HOMOGLYPHS = {
@@ -62,18 +64,23 @@ class ProfanityDetector:
         re.compile(r"поху[йия]", re.IGNORECASE),
     ]
 
-    # 2. МЯГКАЯ БРАНЬ И ТОКСИЧНЫЕ ОСКОРБЛЕНИЯ (MILD)
+    # 2. ГРУБЫЕ ОСКОРБЛЕНИЯ (MEDIUM)
+    MEDIUM_PATTERNS: List[re.Pattern[str]] = [
+        re.compile(r"\bурод[а-я]*\b", re.IGNORECASE),
+        re.compile(r"\bтварь\b", re.IGNORECASE),
+        re.compile(r"\bмраз[а-я]*\b", re.IGNORECASE),
+        re.compile(r"\bдебил[а-я]*\b", re.IGNORECASE),
+        re.compile(r"\bдаун[а-я]*\b", re.IGNORECASE),
+        re.compile(r"\bгнид[а-я]*\b", re.IGNORECASE),
+    ]
+
+    # 3. ЛЕГКАЯ БРАНЬ И ТОКСИЧНОСТЬ (MILD / ALL)
     MILD_PATTERNS: List[re.Pattern[str]] = [
         re.compile(r"\bтуп+[оыае][йеяюе]?\b", re.IGNORECASE),
         re.compile(r"\bтупиц[аеыу]\b", re.IGNORECASE),
-        re.compile(r"\bдебил[а-я]*\b", re.IGNORECASE),
-        re.compile(r"\bдаун[а-я]*\b", re.IGNORECASE),
-        re.compile(r"\bурод[а-я]*\b", re.IGNORECASE),
         re.compile(r"\bдур+[а-я]*\b", re.IGNORECASE),
         re.compile(r"\bидиот[а-я]*\b", re.IGNORECASE),
         re.compile(r"\bкретин[а-я]*\b", re.IGNORECASE),
-        re.compile(r"\bмраз[а-я]*\b", re.IGNORECASE),
-        re.compile(r"\bтварь\b", re.IGNORECASE),
         re.compile(r"\bчмо[а-я]*\b", re.IGNORECASE),
         re.compile(r"\bлох[а-я]*\b", re.IGNORECASE),
         re.compile(r"\bблин\b", re.IGNORECASE),
@@ -113,20 +120,36 @@ class ProfanityDetector:
         if not text:
             return ""
         t = text.lower()
-        # Удаляем скрытые/zero-width символы
         t = re.sub(r"[​-‏﻿­]", "", t)
-        # Заменяем похожие символы/цифры/латиницу
         trans = str.maketrans(cls.HOMOGLYPHS)
         t = t.translate(trans)
-        # Сжимаем повторы 3+ букв до 1
         t = re.sub(r"(.)\1{2,}", r"\1", t)
         return t
 
-    def check_regex(self, text: str, strictness: str = "hard") -> Optional[ProfanityResult]:
+    def check_regex(
+        self,
+        text: str,
+        strictness: str = "hard",
+        custom_words: Optional[List[str]] = None,
+    ) -> Optional[ProfanityResult]:
         if not text or not text.strip():
             return None
 
         normalized = self.normalize(text)
+
+        # 0. Проверка пользовательских стоп-слов чата
+        if custom_words:
+            for cw in custom_words:
+                cw_norm = self.normalize(cw.strip())
+                if cw_norm and len(cw_norm) >= 2:
+                    if re.search(rf"\b{re.escape(cw_norm)}\b", normalized):
+                        return ProfanityResult(
+                            is_profane=True,
+                            method="regex",
+                            reason=f"Запрещенное слово чата: {cw}",
+                            confidence=1.0,
+                            severity="custom",
+                        )
 
         # 1. Проверка по токенам (обычные слова)
         tokens = re.findall(r"[а-яa-z0-9]+", normalized)
@@ -144,18 +167,29 @@ class ProfanityDetector:
                         severity="hard",
                     )
 
+            if strictness in ("medium", "all"):
+                for pat in self.MEDIUM_PATTERNS:
+                    if pat.search(token):
+                        return ProfanityResult(
+                            is_profane=True,
+                            method="regex",
+                            reason="Обнаружено грубое оскорбление",
+                            confidence=0.96,
+                            severity="medium",
+                        )
+
             if strictness == "all":
                 for pat in self.MILD_PATTERNS:
                     if pat.search(token):
                         return ProfanityResult(
                             is_profane=True,
                             method="regex",
-                            reason="Обнаружена легкая брань / оскорбление",
+                            reason="Обнаружена легкая брань / токсичность",
                             confidence=0.95,
                             severity="mild",
                         )
 
-        # 2. Проверка слов, разделенных точками, пробелами или спецсимволами (например: 'с.у.к.а', 'п и д о р')
+        # 2. Проверка слов, разделенных точками, пробелами или спецсимволами ('с.у.к.а', 'п и д о р')
         alpha_only = re.sub(r"[^а-яa-z0-9]", "", normalized)
         if alpha_only and len(alpha_only) >= 3:
             if not any(wl.search(alpha_only) for wl in self.WHITELIST_PATTERNS):
@@ -169,29 +203,46 @@ class ProfanityDetector:
                             severity="hard",
                         )
 
+                if strictness in ("medium", "all"):
+                    for pat in self.MEDIUM_PATTERNS:
+                        if pat.search(alpha_only):
+                            return ProfanityResult(
+                                is_profane=True,
+                                method="regex",
+                                reason="Обнаружено замаскированное оскорбление",
+                                confidence=0.94,
+                                severity="medium",
+                            )
+
                 if strictness == "all":
                     for pat in self.MILD_PATTERNS:
                         if pat.search(alpha_only):
                             return ProfanityResult(
                                 is_profane=True,
                                 method="regex",
-                                reason="Обнаружена замаскированная брань / оскорбление",
+                                reason="Обнаружена замаскированная брань / токсичность",
                                 confidence=0.92,
                                 severity="mild",
                             )
 
         return None
 
-    async def check_text(self, text: str, strictness: str = "hard") -> ProfanityResult:
+    async def check_text(
+        self,
+        text: str,
+        strictness: str = "hard",
+        custom_words: Optional[List[str]] = None,
+    ) -> ProfanityResult:
         cleaned = text.strip()
         if not cleaned:
             return ProfanityResult(is_profane=False, method="clean", reason="", confidence=1.0)
 
-        cache_key = f"{strictness}:{cleaned}"
+        cw_key = ",".join(sorted(custom_words)) if custom_words else ""
+        cache_key = f"{strictness}:{cw_key}:{cleaned}"
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        regex_match = self.check_regex(cleaned, strictness=strictness)
+        regex_match = self.check_regex(cleaned, strictness=strictness, custom_words=custom_words)
         if regex_match:
             self._save_to_cache(cache_key, regex_match)
             return regex_match
@@ -210,11 +261,16 @@ class ProfanityDetector:
         if strictness == "hard":
             strictness_rule = (
                 "Ты должен регистрировать ТОЛЬКО РЕАЛЬНО ЖЕСТКИЙ МАТ (сука, пидор, гандон, хуй, пизда, ебать, блядь и их любые скрытые формы).\n"
-                "Легкие ругательства (блин, дурак, тупой, черт, хрен, капец) НЕ считай матом (is_profane: false)."
+                "Обычные ругательства (блин, дурак, тупой, черт, хрен, капец, урод) НЕ считай матом (is_profane: false)."
+            )
+        elif strictness == "medium":
+            strictness_rule = (
+                "Ты должен регистрировать ЖЕСТКИЙ МАТ + ГРУБЫЕ ОСКОРБЛЕНИЯ (урод, тварь, мразь, дебил, даун, гнида).\n"
+                "Легкие междометия (блин, капец, черт) НЕ считай нарушением (is_profane: false)."
             )
         else:
             strictness_rule = (
-                "Ты должен регистрировать КАК ЖЕСТКИЙ МАТ, ТАК И ЛЕГКУЮ БРАНЬ / ТОКСИЧНЫЕ ОСКОРБЛЕНИЯ (блин, тупой, дурак, дебил, даун, урод, мразь и т.д.)."
+                "Ты должен регистрировать КАК ЖЕСТКИЙ МАТ, ТАК И ЛЮБУЮ БРАНЬ / ТОКСИЧНЫЕ ОСКОРБЛЕНИЯ (блин, тупой, дурак, дебил, даун, урод, мразь и т.д.)."
             )
 
         prompt_system = (
@@ -243,7 +299,9 @@ class ProfanityDetector:
             is_prof = bool(data.get("is_profane"))
             severity = str(data.get("severity", "hard" if strictness == "hard" else "mild"))
 
-            if strictness == "hard" and severity == "mild":
+            if strictness == "hard" and severity in ("mild", "medium"):
+                is_prof = False
+            elif strictness == "medium" and severity == "mild":
                 is_prof = False
 
             return ProfanityResult(

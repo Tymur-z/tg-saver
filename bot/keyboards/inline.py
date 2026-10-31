@@ -360,8 +360,15 @@ def llm_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🧠 Выбрать модель", callback_data="llm_select_model"),
             ],
             [
-                InlineKeyboardButton(text="🌐 Задать Base URL / IP", callback_data="llm_select_url"),
+                InlineKeyboardButton(text="🌐 Base URL / IP", callback_data="llm_select_url"),
                 InlineKeyboardButton(text="🧪 Проверить связь", callback_data="llm_test_ping"),
+            ],
+            [
+                InlineKeyboardButton(text="📚 Контекст чата", callback_data="llm_select_context"),
+                InlineKeyboardButton(text="📝 Длина ответа", callback_data="llm_select_tokens"),
+            ],
+            [
+                InlineKeyboardButton(text="🌡️ Креативность (Temp)", callback_data="llm_select_temp"),
             ],
             [InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin")],
         ]
@@ -429,3 +436,76 @@ def my_style_kb(is_admin: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+
+def mod_strictness_select_kb(cid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🤬 1. Только жесткий мат", callback_data=f"mod_set_strict:{cid}:hard")],
+            [InlineKeyboardButton(text="⚠️ 2. Жесткий мат + грубые слова", callback_data=f"mod_set_strict:{cid}:medium")],
+            [InlineKeyboardButton(text="🛑 3. Максимальная строгость (+ брань)", callback_data=f"mod_set_strict:{cid}:all")],
+            [InlineKeyboardButton(text="⬅️ Назад к настройкам чата", callback_data=f"mod_chat_view:{cid}")],
+        ]
+    )
+
+
+def mod_custom_words_kb(cid: int, has_words: bool) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="✏️ Задать / Изменить стоп-слова", callback_data=f"mod_cw_edit:{cid}")],
+    ]
+    if has_words:
+        buttons.append([InlineKeyboardButton(text="🗑️ Очистить свои стоп-слова", callback_data=f"mod_cw_clear:{cid}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам чата", callback_data=f"mod_chat_view:{cid}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def llm_context_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚡ 5 сообщ.", callback_data="llm_preset_ctx:5"),
+                InlineKeyboardButton(text="📌 10 сообщ.", callback_data="llm_preset_ctx:10"),
+            ],
+            [
+                InlineKeyboardButton(text="📗 15 сообщ. (стандарт)", callback_data="llm_preset_ctx:15"),
+                InlineKeyboardButton(text="📚 25 сообщ.", callback_data="llm_preset_ctx:25"),
+            ],
+            [
+                InlineKeyboardButton(text="📖 40 сообщ. (глубокий)", callback_data="llm_preset_ctx:40"),
+                InlineKeyboardButton(text="✏️ Ввести число", callback_data="llm_custom_ctx"),
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
+        ]
+    )
+
+
+def llm_tokens_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚡ Краткий (~250)", callback_data="llm_preset_tokens:250"),
+                InlineKeyboardButton(text="📝 Средний (~600)", callback_data="llm_preset_tokens:600"),
+            ],
+            [
+                InlineKeyboardButton(text="📖 Развернутый (~1000)", callback_data="llm_preset_tokens:1000"),
+                InlineKeyboardButton(text="📚 Большой (~1500)", callback_data="llm_preset_tokens:1500"),
+            ],
+            [
+                InlineKeyboardButton(text="🚀 Максимум (~2500)", callback_data="llm_preset_tokens:2500"),
+                InlineKeyboardButton(text="✏️ Ввести число", callback_data="llm_custom_tokens"),
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
+        ]
+    )
+
+
+def llm_temp_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🎯 Точный (0.2)", callback_data="llm_preset_temp:0.2"),
+                InlineKeyboardButton(text="⚖️ Сбалансированный (0.7)", callback_data="llm_preset_temp:0.7"),
+                InlineKeyboardButton(text="🎨 Креативный (1.0)", callback_data="llm_preset_temp:1.0"),
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
+        ]
+    )

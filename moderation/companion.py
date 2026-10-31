@@ -166,11 +166,32 @@ class ChatCompanion:
         llm_client: Optional[LLMClient] = None,
         context_buffer: Optional[ChatContextBuffer] = None,
         system_prompt: str = COMPANION_SYSTEM_PROMPT,
+        context_limit: int = 15,
+        max_tokens: int = 800,
+        temperature: float = 0.7,
     ) -> None:
         self.llm_client = llm_client
-        self.context_buffer = context_buffer or ChatContextBuffer()
+        self.context_buffer = context_buffer or ChatContextBuffer(max_history=max(context_limit, 40))
         self.system_prompt = system_prompt
+        self.context_limit = context_limit
+        self.max_tokens = max_tokens
+        self.temperature = temperature
         self._bot_user: Optional[User] = None
+
+    def update_config(
+        self,
+        context_limit: Optional[int] = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+    ) -> None:
+        if context_limit is not None:
+            self.context_limit = max(1, context_limit)
+            if self.context_buffer.max_history < self.context_limit:
+                self.context_buffer.max_history = self.context_limit
+        if max_tokens is not None:
+            self.max_tokens = max(50, max_tokens)
+        if temperature is not None:
+            self.temperature = max(0.0, min(2.0, temperature))
 
     async def get_bot_user(self, bot: Bot) -> User:
         if self._bot_user is None:
@@ -255,7 +276,7 @@ class ChatCompanion:
             logger.debug("ChatCompanion: LLMClient is not configured or missing API key.")
             return None
 
-        context_str = self.context_buffer.format_context(chat_id, limit=12)
+        context_str = self.context_buffer.format_context(chat_id, limit=self.context_limit)
 
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": self.system_prompt},
@@ -275,8 +296,8 @@ class ChatCompanion:
         try:
             reply = await self.llm_client.chat_completion(
                 messages=messages,
-                temperature=0.7,
-                max_tokens=900,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
             )
             if reply:
                 reply = reply.strip()

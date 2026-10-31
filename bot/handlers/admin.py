@@ -24,8 +24,13 @@ from bot.keyboards.inline import (
     chat_moderation_detail_kb,
     llm_base_urls_select_kb,
     llm_cancel_kb,
+    llm_context_select_kb,
     llm_models_select_kb,
     llm_settings_kb,
+    llm_temp_select_kb,
+    llm_tokens_select_kb,
+    mod_custom_words_kb,
+    mod_strictness_select_kb,
     main_menu_kb,
     moderation_chats_list_kb,
     password_management_kb,
@@ -503,12 +508,28 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
 
     title = chat.get("title") or f"ID {chat_id}"
     c_type = chat.get("chat_type", "group")
+    import json
     f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
     w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
     d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
     ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
     strictness = chat.get("profanity_strictness", "hard")
-    strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон и т.д.)" if strictness == "hard" else "⚠️ Жесткий мат + легкая брань (блин, тупой, дурак и т.д.)"
+    if strictness == "hard":
+        strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон)"
+    elif strictness == "medium":
+        strictness_desc = "⚠️ Жесткий мат + грубые слова (урод, дебил)"
+    else:
+        strictness_desc = "🛑 Максимальная строгость (+ блин, тупой)"
+
+    raw_cw = chat.get("custom_profanity_words", "[]")
+    try:
+        cw_list = json.loads(raw_cw) if isinstance(raw_cw, str) else (raw_cw or [])
+    except Exception:
+        cw_list = []
+    cw_desc = f"<code>{', '.join(cw_list[:5])}</code>" if cw_list else "<i>нет</i>"
+    if len(cw_list) > 5:
+        cw_desc += f" <i>(+еще {len(cw_list)-5})</i>"
+
     div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     lines = [
@@ -517,11 +538,12 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
         "🛡️ <b>Модерация ненормативной лексики:</b>",
         f"• Фильтр матов: {f_on}",
         f"• Режим строгости: <b>{strictness_desc}</b>",
+        f"• Свои стоп-слова: {cw_desc}",
         f"• Предупреждать нарушителя: {w_on}",
         f"• Удалять сообщения с матом: {d_on}\n{div}",
         "💬 <b>Режим ИИ-собеседника:</b>",
         f"• Ответ на теги и Reply: {ai_on}\n{div}",
-        "👇 <i>Нажмите на кнопку ниже для переключения:</i>",
+        "👇 <i>Нажмите на кнопку ниже для настройки:</i>",
     ]
     text = "\n".join(lines)
     await callback.message.edit_text(text, reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
@@ -588,12 +610,28 @@ async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_ad
 
     title = chat.get("title") or f"ID {chat_id}"
     c_type = chat.get("chat_type", "group")
+    import json
     f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
     w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
     d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
     ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
     strictness = chat.get("profanity_strictness", "hard")
-    strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон и т.д.)" if strictness == "hard" else "⚠️ Жесткий мат + легкая брань (блин, тупой, дурак и т.д.)"
+    if strictness == "hard":
+        strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон)"
+    elif strictness == "medium":
+        strictness_desc = "⚠️ Жесткий мат + грубые слова (урод, дебил)"
+    else:
+        strictness_desc = "🛑 Максимальная строгость (+ блин, тупой)"
+
+    raw_cw = chat.get("custom_profanity_words", "[]")
+    try:
+        cw_list = json.loads(raw_cw) if isinstance(raw_cw, str) else (raw_cw or [])
+    except Exception:
+        cw_list = []
+    cw_desc = f"<code>{', '.join(cw_list[:5])}</code>" if cw_list else "<i>нет</i>"
+    if len(cw_list) > 5:
+        cw_desc += f" <i>(+еще {len(cw_list)-5})</i>"
+
     div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     lines = [
@@ -602,11 +640,12 @@ async def cb_chat_moderation_toggle(callback: CallbackQuery, db: Database, is_ad
         "🛡️ <b>Модерация ненормативной лексики:</b>",
         f"• Фильтр матов: {f_on}",
         f"• Режим строгости: <b>{strictness_desc}</b>",
+        f"• Свои стоп-слова: {cw_desc}",
         f"• Предупреждать нарушителя: {w_on}",
         f"• Удалять сообщения с матом: {d_on}\n{div}",
         "💬 <b>Режим ИИ-собеседника:</b>",
         f"• Ответ на теги и Reply: {ai_on}\n{div}",
-        "👇 <i>Нажмите на кнопку ниже для переключения:</i>",
+        "👇 <i>Нажмите на кнопку ниже для настройки:</i>",
     ]
     text = "\n".join(lines)
     await callback.message.edit_text(text, reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
@@ -617,6 +656,12 @@ class AdminLLMStates(StatesGroup):
     waiting_for_api_key = State()
     waiting_for_model = State()
     waiting_for_base_url = State()
+    waiting_for_context = State()
+    waiting_for_tokens = State()
+
+
+class AdminModStates(StatesGroup):
+    waiting_for_custom_words = State()
 
 
 async def _render_llm_settings(conn, settings: Settings) -> tuple[str, bool]:
@@ -639,12 +684,20 @@ async def _render_llm_settings(conn, settings: Settings) -> tuple[str, bool]:
     status_str = "🟢 <b>АКТИВЕН</b>" if is_on else "⚪ <b>ОТКЛЮЧЕН</b>"
     div = "━━━━━━━━━━━━━━━━━━━━━━"
 
+    ctx = conf.get("companion_context_limit", 15)
+    toks = conf.get("companion_max_tokens", 800)
+    temp = conf.get("companion_temperature", 0.7)
+
     lines = [
         f"🤖 <b>Панель управления ИИ (LLM)</b>\n{div}",
         f"• ⚡ <b>Статус ИИ:</b> {status_str}",
         f"• 🧠 <b>Модель:</b> <code>{conf['llm_model']}</code>",
         f"• 🌐 <b>Эндпоинт (URL/IP):</b> <code>{conf['llm_base_url']}</code>",
         f"• 🔑 <b>API-ключ:</b> {key_masked}\n{div}",
+        "⚙️ <b>Параметры генерации и контекста:</b>",
+        f"• 📚 <b>Контекст чата:</b> <code>{ctx}</code> недавних сообщ.",
+        f"• 📝 <b>Длина ответа:</b> <code>{toks}</code> токенов",
+        f"• 🌡️ <b>Креативность:</b> <code>{temp}</code>\n{div}",
         "💡 <i>Поддерживаются OpenAI, Google Gemini, DeepSeek и локальные LLM (vLLM / Ollama).</i>",
     ]
     return "\n".join(lines), is_on
@@ -944,3 +997,408 @@ async def cb_llm_test_ping(
         )
 
     await callback.message.answer(result_text, parse_mode="HTML")
+
+# ==================== STRICTNESS & CUSTOM WORDS ====================
+
+@router.callback_query(F.data.startswith("mod_select_strictness:"))
+async def cb_mod_select_strictness(callback: CallbackQuery, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    chat_id = int(callback.data.split(":")[1])
+    text = (
+        "🎯 <b>Выберите уровень строгости фильтрации матов:</b>\n\n"
+        "1. 🤬 <b>Только жесткий мат</b> (Hard):\n"
+        "• Реагирует на: <i>сука, пидор, гандон, хуй, пизда, ебать, блядь</i> и их производные/маскировки.\n"
+        "• Бытовые слова (<i>блин, тупой, дурак</i>) разрешены.\n\n"
+        "2. ⚠️ <b>Жесткий мат + грубые оскорбления</b> (Medium):\n"
+        "• Всё выше + слова: <i>урод, тварь, дебил, даун, мразь, гнида</i>.\n\n"
+        "3. 🛑 <b>Максимальная строгость</b> (All):\n"
+        "• Полная фильтрация: всё выше + легкая брань: <i>блин, тупой, дурак, чмо, лох</i>."
+    )
+    await callback.message.edit_text(text, reply_markup=mod_strictness_select_kb(chat_id), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mod_set_strict:"))
+async def cb_mod_set_strict(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    chat_id = int(parts[1])
+    strictness = parts[2]
+
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        await chat_repo.set_strictness(chat_id, strictness)
+        chat = await chat_repo.get_chat(chat_id)
+
+    title = chat.get("title") or f"ID {chat_id}"
+    c_type = chat.get("chat_type", "group")
+    f_on = "🟢 ВКЛ" if chat.get("profanity_filter_enabled") else "⚪ ВЫКЛ"
+    w_on = "🟢 ВКЛ" if chat.get("profanity_warn_enabled") else "⚪ ВЫКЛ"
+    d_on = "🟢 ВКЛ" if chat.get("profanity_delete_enabled") else "⚪ ВЫКЛ"
+    ai_on = "🟢 ВКЛ" if chat.get("chat_ai_enabled") else "⚪ ВЫКЛ"
+
+    if strictness == "hard":
+        strictness_desc = "🤬 Только жесткий мат (сука, пидор, гандон)"
+    elif strictness == "medium":
+        strictness_desc = "⚠️ Жесткий мат + грубые слова (урод, дебил)"
+    else:
+        strictness_desc = "🛑 Максимальная строгость (+ блин, тупой)"
+
+    import json
+    raw_cw = chat.get("custom_profanity_words", "[]")
+    try:
+        cw_list = json.loads(raw_cw) if isinstance(raw_cw, str) else (raw_cw or [])
+    except Exception:
+        cw_list = []
+    cw_desc = f"<code>{', '.join(cw_list[:5])}</code>" if cw_list else "<i>нет</i>"
+    if len(cw_list) > 5:
+        cw_desc += f" <i>(+еще {len(cw_list)-5})</i>"
+
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
+    lines = [
+        f"🛡️ <b>Настройки чата:</b> {title}",
+        f"🆔 <code>{chat_id}</code>  •  <i>{c_type}</i>\n{div}",
+        "🛡️ <b>Модерация ненормативной лексики:</b>",
+        f"• Фильтр матов: {f_on}",
+        f"• Режим строгости: <b>{strictness_desc}</b>",
+        f"• Свои стоп-слова: {cw_desc}",
+        f"• Предупреждать нарушителя: {w_on}",
+        f"• Удалять сообщения с матом: {d_on}\n{div}",
+        "💬 <b>Режим ИИ-собеседника:</b>",
+        f"• Ответ на теги и Reply: {ai_on}\n{div}",
+        "👇 <i>Нажмите на кнопку ниже для настройки:</i>",
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
+    await callback.answer("Строгость сохранена")
+
+
+@router.callback_query(F.data.startswith("mod_custom_words:"))
+async def cb_mod_custom_words(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    import json
+    chat_id = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        chat = await chat_repo.get_chat(chat_id)
+
+    raw_cw = chat.get("custom_profanity_words", "[]") if chat else "[]"
+    try:
+        cw_list = json.loads(raw_cw) if isinstance(raw_cw, str) else (raw_cw or [])
+    except Exception:
+        cw_list = []
+
+    words_str = ", ".join(cw_list) if cw_list else "<i>(список пуст)</i>"
+    text = (
+        f"📝 <b>Свои стоп-слова для чата #{chat_id}:</b>\n\n"
+        f"Текущий список: {words_str}\n\n"
+        "<i>💡 Если сообщение участника содержит любое из этих слов, бот зарегистрирует нарушение "
+        "и применит предупреждение или удаление в зависимости от настроек чата.</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=mod_custom_words_kb(chat_id, bool(cw_list)), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mod_cw_edit:"))
+async def cb_mod_cw_edit(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    chat_id = int(callback.data.split(":")[1])
+    await state.set_state(AdminModStates.waiting_for_custom_words)
+    await state.update_data(mod_chat_id=chat_id)
+
+    await callback.message.answer(
+        "✏️ <b>Введите стоп-слова через запятую:</b>\n\n"
+        "<i>Пример: спам, казино, реклама, мошенники</i>",
+        reply_markup=llm_cancel_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminModStates.waiting_for_custom_words)
+async def proc_mod_save_custom_words(message: Message, state: FSMContext, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        return
+
+    data = await state.get_data()
+    chat_id = data.get("mod_chat_id")
+    await state.clear()
+
+    if not chat_id:
+        await message.answer("Ошибка: чат не определен.")
+        return
+
+    raw_text = message.text or ""
+    words = [w.strip() for w in raw_text.split(",") if w.strip()]
+
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        await chat_repo.set_custom_words(chat_id, words)
+        chat = await chat_repo.get_chat(chat_id)
+
+    await message.answer(
+        f"✅ <b>Сохранено {len(words)} стоп-слов для чата!</b>",
+        reply_markup=chat_moderation_detail_kb(chat) if chat else None,
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("mod_cw_clear:"))
+async def cb_mod_cw_clear(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    chat_id = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        await chat_repo.set_custom_words(chat_id, [])
+        chat = await chat_repo.get_chat(chat_id)
+
+    await callback.answer("Стоп-слова очищены!")
+    text = (
+        f"📝 <b>Свои стоп-слова для чата #{chat_id}:</b>\n\n"
+        "Текущий список: <i>(список пуст)</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=mod_custom_words_kb(chat_id, False), parse_mode="HTML")
+
+
+# ==================== LLM CONTEXT & GENERATION SETTINGS ====================
+
+@router.callback_query(F.data == "llm_select_context")
+async def cb_llm_select_context(callback: CallbackQuery, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    text = (
+        "📚 <b>Размер контекста чата (история сообщений):</b>\n\n"
+        "Определяет, сколько недавних сообщений из чата Ричард держит в памяти при ответе на теги и вопросы.\n\n"
+        "• ⚡ <b>5 сообщ.</b> — минимально / экономно по токенам\n"
+        "• 📌 <b>10 сообщ.</b> — короткий контекст\n"
+        "• 📗 <b>15 сообщ.</b> — стандартное значение\n"
+        "• 📚 <b>25 сообщ.</b> — глубокий контекст диалога\n"
+        "• 📖 <b>40 сообщ.</b> — максимальный охват дискуссии\n\n"
+        "Выберите пресет или введите точное число:"
+    )
+    await callback.message.edit_text(text, reply_markup=llm_context_select_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("llm_preset_ctx:"))
+async def cb_llm_preset_ctx(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    ctx_val = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(context_limit=ctx_val)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    if companion:
+        companion.update_config(context_limit=ctx_val)
+
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.answer(f"Контекст: {ctx_val} сообщений")
+
+
+@router.callback_query(F.data == "llm_custom_ctx")
+async def cb_llm_custom_ctx(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    await state.set_state(AdminLLMStates.waiting_for_context)
+    await callback.message.edit_text(
+        "✏️ <b>Введите размер контекста (число сообщений от 1 до 100):</b>",
+        reply_markup=llm_cancel_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminLLMStates.waiting_for_context)
+async def proc_llm_custom_ctx(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        return
+
+    try:
+        val = int(message.text.strip())
+        if val < 1 or val > 150:
+            raise ValueError()
+    except ValueError:
+        await message.answer("❌ Введите целое число от 1 до 150. Попробуйте снова через /llm", reply_markup=admin_panel_kb())
+        await state.clear()
+        return
+
+    await state.clear()
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(context_limit=val)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    if companion:
+        companion.update_config(context_limit=val)
+
+    await message.answer(f"✅ <b>Контекст установлен:</b> <code>{val}</code> сообщ.\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "llm_select_tokens")
+async def cb_llm_select_tokens(callback: CallbackQuery, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    text = (
+        "📝 <b>Максимальная длина ответов Ричарда (max_tokens):</b>\n\n"
+        "Определяет лимит длины генерации одного сообщения нейросетью:\n\n"
+        "• ⚡ <b>Краткий (~250 токенов)</b> — быстрые лаконичные реплики\n"
+        "• 📝 <b>Средний (~600 токенов)</b> — обычные ответы (1-2 абзаца)\n"
+        "• 📖 <b>Развернутый (~1000 токенов)</b> — подробные объяснения и темы\n"
+        "• 📚 <b>Большой (~1500 токенов)</b> — длинные доклады/рефераты\n"
+        "• 🚀 <b>Максимум (~2500 токенов)</b> — практически без ограничений\n\n"
+        "Выберите пресет или введите число вручную:"
+    )
+    await callback.message.edit_text(text, reply_markup=llm_tokens_select_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("llm_preset_tokens:"))
+async def cb_llm_preset_tokens(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    tok_val = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(max_tokens=tok_val)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    if companion:
+        companion.update_config(max_tokens=tok_val)
+
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.answer(f"Длина: {tok_val} токенов")
+
+
+@router.callback_query(F.data == "llm_custom_tokens")
+async def cb_llm_custom_tokens(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    await state.set_state(AdminLLMStates.waiting_for_tokens)
+    await callback.message.edit_text(
+        "✏️ <b>Введите максимальное количество токенов (число от 50 до 4000):</b>",
+        reply_markup=llm_cancel_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminLLMStates.waiting_for_tokens)
+async def proc_llm_custom_tokens(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        return
+
+    try:
+        val = int(message.text.strip())
+        if val < 50 or val > 4096:
+            raise ValueError()
+    except ValueError:
+        await message.answer("❌ Введите целое число от 50 до 4096. Попробуйте снова через /llm", reply_markup=admin_panel_kb())
+        await state.clear()
+        return
+
+    await state.clear()
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(max_tokens=val)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    if companion:
+        companion.update_config(max_tokens=val)
+
+    await message.answer(f"✅ <b>Лимит длины установлен:</b> <code>{val}</code> токенов\n\n{text}", reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "llm_select_temp")
+async def cb_llm_select_temp(callback: CallbackQuery, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    text = (
+        "🌡️ <b>Креативность ответов (Temperature):</b>\n\n"
+        "• 🎯 <b>Точный (0.2)</b> — строгие факты, минимум фантазии и выдумок\n"
+        "• ⚖️ <b>Сбалансированный (0.7)</b> — стандарт, естественный живой диалог\n"
+        "• 🎨 <b>Креативный (1.0)</b> — яркий юмор, образность, свободная беседы\n\n"
+        "Выберите уровень температуры:"
+    )
+    await callback.message.edit_text(text, reply_markup=llm_temp_select_kb(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("llm_preset_temp:"))
+async def cb_llm_preset_temp(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    temp_val = float(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(temperature=temp_val)
+        text, is_on = await _render_llm_settings(conn, settings)
+
+    if companion:
+        companion.update_config(temperature=temp_val)
+
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on), parse_mode="HTML")
+    await callback.answer(f"Температура: {temp_val}")

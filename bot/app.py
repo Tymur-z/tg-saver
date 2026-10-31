@@ -127,6 +127,9 @@ async def start_application(settings: Settings) -> None:
     )
     companion = ChatCompanion(
         llm_client=llm_client,
+        context_limit=llm_conf.get("companion_context_limit", 15),
+        max_tokens=llm_conf.get("companion_max_tokens", 800),
+        temperature=llm_conf.get("companion_temperature", 0.7),
     )
 
     dp = create_dispatcher(

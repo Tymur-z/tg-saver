@@ -31,17 +31,41 @@ class ConfigRepository(BaseRepository):
         default_api_key: str = "",
         default_base_url: str = "https://api.openai.com/v1",
         default_model: str = "gpt-4o-mini",
+        default_context_limit: int = 15,
+        default_max_tokens: int = 800,
+        default_temperature: float = 0.7,
     ) -> Dict[str, Any]:
         enabled_val = await self.get_value("llm_enabled", "1" if default_enabled else "0")
         api_key_val = await self.get_value("llm_api_key", default_api_key)
         base_url_val = await self.get_value("llm_base_url", default_base_url)
         model_val = await self.get_value("llm_model", default_model)
+        ctx_val = await self.get_value("llm_context_limit", str(default_context_limit))
+        tokens_val = await self.get_value("llm_max_tokens", str(default_max_tokens))
+        temp_val = await self.get_value("llm_temperature", str(default_temperature))
+
+        try:
+            ctx_int = int(ctx_val) if ctx_val else default_context_limit
+        except ValueError:
+            ctx_int = default_context_limit
+
+        try:
+            tokens_int = int(tokens_val) if tokens_val else default_max_tokens
+        except ValueError:
+            tokens_int = default_max_tokens
+
+        try:
+            temp_flt = float(temp_val) if temp_val else default_temperature
+        except ValueError:
+            temp_flt = default_temperature
 
         return {
             "llm_enabled": enabled_val == "1",
             "llm_api_key": api_key_val or "",
             "llm_base_url": base_url_val or default_base_url,
             "llm_model": model_val or default_model,
+            "companion_context_limit": ctx_int,
+            "companion_max_tokens": tokens_int,
+            "companion_temperature": temp_flt,
         }
 
     async def set_llm_config(
@@ -50,6 +74,9 @@ class ConfigRepository(BaseRepository):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
+        context_limit: Optional[int] = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
     ) -> Dict[str, Any]:
         if enabled is not None:
             await self.set_value("llm_enabled", "1" if enabled else "0")
@@ -59,5 +86,11 @@ class ConfigRepository(BaseRepository):
             await self.set_value("llm_base_url", base_url.strip().rstrip("/"))
         if model is not None:
             await self.set_value("llm_model", model.strip())
+        if context_limit is not None:
+            await self.set_value("llm_context_limit", str(context_limit))
+        if max_tokens is not None:
+            await self.set_value("llm_max_tokens", str(max_tokens))
+        if temperature is not None:
+            await self.set_value("llm_temperature", str(temperature))
 
         return await self.get_llm_config()

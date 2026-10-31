@@ -78,8 +78,14 @@ async def handle_incoming_message(
             if chat and chat.get("profanity_filter_enabled") and profanity_detector:
                 text_to_check = MediaHandler.get_text_or_caption(message)
                 if text_to_check and text_to_check.strip():
+                    import json
                     strictness = chat.get("profanity_strictness", "hard")
-                    prof_result = await profanity_detector.check_text(text_to_check, strictness=strictness)
+                    raw_cw = chat.get("custom_profanity_words", "[]")
+                    try:
+                        custom_words = json.loads(raw_cw) if isinstance(raw_cw, str) else (raw_cw or [])
+                    except Exception:
+                        custom_words = []
+                    prof_result = await profanity_detector.check_text(text_to_check, strictness=strictness, custom_words=custom_words)
                     if prof_result.is_profane:
                         is_profane = True
                         logger.info(

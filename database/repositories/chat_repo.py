@@ -144,11 +144,29 @@ class ChatRepository(BaseRepository):
         return [dict(r) for r in rows]
 
 
+
+    async def set_strictness(self, chat_id: int, strictness: str) -> None:
+        valid = {"hard", "medium", "all"}
+        val = strictness if strictness in valid else "hard"
+        await self.execute(
+            "UPDATE chats SET profanity_strictness = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
+            (val, chat_id),
+        )
+
+    async def set_custom_words(self, chat_id: int, words: List[str]) -> None:
+        import json
+        clean_words = [w.strip().lower() for w in words if w.strip()]
+        await self.execute(
+            "UPDATE chats SET custom_profanity_words = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
+            (json.dumps(clean_words, ensure_ascii=False), chat_id),
+        )
+
     async def cycle_strictness(self, chat_id: int) -> str:
         """Cycles between 'hard' (только жесткий мат) and 'all' (жесткий мат + легкая брань/оскорбления)."""
         chat = await self.get_chat(chat_id)
         current = chat.get("profanity_strictness", "hard") if chat else "hard"
-        new_val = "all" if current == "hard" else "hard"
+        cycle_map = {"hard": "medium", "medium": "all", "all": "hard"}
+        new_val = cycle_map.get(current, "hard")
         await self.execute(
             "UPDATE chats SET profanity_strictness = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
             (new_val, chat_id),
