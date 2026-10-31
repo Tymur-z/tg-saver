@@ -83,27 +83,34 @@ def users_list_kb(users: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def user_card_kb(target_user: Dict[str, Any], is_owner: bool = False) -> InlineKeyboardMarkup:
+def user_card_kb(target_user: Dict[str, Any], is_owner: bool = False, is_self: bool = False) -> InlineKeyboardMarkup:
     uid = target_user["user_id"]
     is_blocked = bool(target_user.get("is_blocked"))
     role = target_user.get("role", "user")
 
     buttons: List[List[InlineKeyboardButton]] = []
 
-    if is_blocked:
-        buttons.append([InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data=f"user_unblock:{uid}")])
+    # Owner or self cannot be blocked or reset
+    if is_owner or is_self or role == "owner":
+        buttons.append([InlineKeyboardButton(text="👑 Главный владелец (Защищён)", callback_data="noop")])
     else:
-        buttons.append([InlineKeyboardButton(text="🚫 Заблокировать аккаунт", callback_data=f"user_block:{uid}")])
+        if is_blocked:
+            buttons.append([InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data=f"user_unblock:{uid}")])
+        else:
+            buttons.append([InlineKeyboardButton(text="🚫 Заблокировать аккаунт", callback_data=f"user_block:{uid}")])
 
-    if role == "admin":
-        buttons.append([InlineKeyboardButton(text="👤 Снять права администратора", callback_data=f"user_role:{uid}:user")])
-    elif role == "user":
-        buttons.append([InlineKeyboardButton(text="👑 Назначить администратором", callback_data=f"user_role:{uid}:admin")])
+        if role == "admin":
+            buttons.append([InlineKeyboardButton(text="👤 Снять права администратора", callback_data=f"user_role:{uid}:user")])
+        elif role == "user":
+            buttons.append([InlineKeyboardButton(text="👑 Назначить администратором", callback_data=f"user_role:{uid}:admin")])
+
+        buttons.append([
+            InlineKeyboardButton(text="🔑 Сбросить авторизацию (потребует пароль)", callback_data=f"user_reset_auth:{uid}")
+        ])
 
     buttons.append([
-        InlineKeyboardButton(text="🔑 Сбросить авторизацию (потребует пароль)", callback_data=f"user_reset_auth:{uid}")
+        InlineKeyboardButton(text="📊 Анализ стиля пользователя", callback_data=f"view_profile:{uid}"),
     ])
-
     buttons.append([
         InlineKeyboardButton(text="⬅️ Назад к пользователям", callback_data="admin_users"),
     ])
@@ -353,9 +360,11 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
     else:
         mute_label = f"🔇 Мут: {auto_mute // 3600}ч"
 
+    warn_sec_label = f"⏱️ Срок варна: {warn_sec}с" if warn_sec > 0 else "⏱️ Срок варна: Выкл"
+
     btn_filter = f"{'🟢' if filter_on else '⚪'} Фильтр мата"
     btn_del = f"{'🟢' if del_on else '⚪'} Удалять"
-    btn_warn = f"{'🟢' if warn_on else '⚪'} Варнить"
+    btn_warn = f"{'🟢' if warn_on else '⚪'} Предупреждать"
     btn_ai = f"{'🟢' if ai_on else '⚪'} ИИ Ричард"
 
     return InlineKeyboardMarkup(
@@ -378,10 +387,11 @@ def chat_moderation_detail_kb(chat: Dict[str, Any]) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text=btn_ai, callback_data=f"mod_toggle:{cid}:chat_ai_enabled"),
-                InlineKeyboardButton(text="📜 Память ИИ", callback_data=f"mod_view_history:{cid}"),
+                InlineKeyboardButton(text="👥 По участникам", callback_data=f"mod_users_ctx:{cid}"),
             ],
             [
-                InlineKeyboardButton(text="🧹 Очистить память чата", callback_data=f"mod_clear_mem:{cid}"),
+                InlineKeyboardButton(text="📜 Память ИИ", callback_data=f"mod_view_history:{cid}"),
+                InlineKeyboardButton(text="🧹 Очистить чат", callback_data=f"mod_clear_mem:{cid}"),
             ],
             [
                 InlineKeyboardButton(text="🔄 Обновить", callback_data=f"mod_chat_view:{cid}"),
@@ -416,7 +426,7 @@ def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None) -> 
     typing_text = "🟢 «Печатает...»" if typing_on else "⚪ «Печатает...»"
 
     rand_chance = conf.get("companion_random_reply_chance", 0)
-    rand_text = f"🎲 Рандом: {rand_chance}%" if rand_chance > 0 else "🎲 Рандом: Выкл"
+    rand_text = f"💬 Инициатива: {rand_chance}%" if rand_chance > 0 else "💬 Инициатива: Выкл"
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -442,7 +452,7 @@ def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None) -> 
                 InlineKeyboardButton(text=typing_text, callback_data="llm_toggle_typing"),
             ],
             [
-                InlineKeyboardButton(text=rand_text, callback_data="llm_cycle_random"),
+                InlineKeyboardButton(text=rand_text, callback_data="llm_select_random"),
                 InlineKeyboardButton(text="🧹 Очистить всю память", callback_data="llm_clear_all_mem"),
             ],
             [
@@ -627,5 +637,43 @@ def mod_history_kb(cid: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🧹 Очистить память для этого чата", callback_data=f"mod_clear_mem:{cid}")],
             [InlineKeyboardButton(text="⬅️ Назад к настройкам чата", callback_data=f"mod_chat_view:{cid}")],
+        ]
+    )
+
+
+def llm_random_select_kb(curr_val: int = 0) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"{'✅ ' if curr_val == 0 else ''}⚪ Выкл (только тег/реплай)", callback_data="llm_set_random:0")],
+            [
+                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 2 else ''}🟢 Редко (2%)", callback_data="llm_set_random:2"),
+                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 5 else ''}🟡 Умеренно (5%)", callback_data="llm_set_random:5"),
+            ],
+            [
+                InlineKeyboardButton(text=f"{'✅ ' if curr_val == 10 else ''}🟠 Активно (10%)", callback_data="llm_set_random:10"),
+                InlineKeyboardButton(text="✏️ Задать свой %", callback_data="llm_custom_random"),
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
+        ]
+    )
+
+
+def mod_participants_list_kb(chat_id: int, participants: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = []
+    for p in participants:
+        uname = f" (@{p['username']})" if p.get("username") else ""
+        label = f"👤 {p['user_name'][:14]}{uname} ({p['msg_count']} сообщ.)"
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"mod_user_ctx:{chat_id}:{p['user_id']}")])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам чата", callback_data=f"mod_chat_view:{chat_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def mod_user_history_kb(chat_id: int, user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🧹 Очистить контекст этого участника", callback_data=f"mod_clear_user_ctx:{chat_id}:{user_id}")],
+            [InlineKeyboardButton(text="👥 Ко всем участникам", callback_data=f"mod_users_ctx:{chat_id}")],
+            [InlineKeyboardButton(text="⬅️ К настройкам чата", callback_data=f"mod_chat_view:{chat_id}")],
         ]
     )

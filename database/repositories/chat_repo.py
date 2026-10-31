@@ -133,7 +133,7 @@ class ChatRepository(BaseRepository):
         return [dict(r) for r in rows]
 
     async def list_moderation_chats(self) -> List[Dict[str, Any]]:
-        """Return all group, supergroup, and channel chats for moderation settings."""
+        """Return all group, supergroup, and channel chats for moderation settings, deduplicating migrated groups."""
         rows = await self.fetch_all(
             """
             SELECT * FROM chats
@@ -141,7 +141,25 @@ class ChatRepository(BaseRepository):
             ORDER BY title ASC
             """
         )
-        return [dict(r) for r in rows]
+        all_chats = [dict(r) for r in rows]
+        
+        # When a Telegram basic group is upgraded to supergroup, both can exist in DB with same title.
+        # Prefer supergroup and channels over basic groups.
+        super_titles = {(c.get("title") or "").strip().lower() for c in all_chats if c.get("chat_type") in ("supergroup", "channel")}
+        
+        seen_ids = set()
+        deduped = []
+        for c in all_chats:
+            cid = c.get("chat_id")
+            if cid in seen_ids:
+                continue
+            ctype = c.get("chat_type", "")
+            title_norm = (c.get("title") or "").strip().lower()
+            if ctype == "group" and title_norm in super_titles:
+                continue
+            seen_ids.add(cid)
+            deduped.append(c)
+        return deduped
 
 
 
@@ -303,3 +321,36 @@ class ChatRepository(BaseRepository):
             (chat_id, user_id, hours),
         )
         return int(row["cnt"]) if row else 0
+
+    async def get_companion_participants(self, chat_id: int) -> List[Dict[str, Any]]:
+        rows = await self.fetch_all(
+            """
+            SELECT user_id, user_name, username, COUNT(*) AS msg_count, MAX(created_at) AS last_seen
+            FROM companion_chat_history
+            WHERE chat_id = ? AND is_bot = 0
+            GROUP BY user_id
+            ORDER BY msg_count DESC
+            """,
+            (chat_id,),
+        )
+        return [dict(r) for r in rows]
+
+    async def get_companion_user_history(self, chat_id: int, user_id: int, limit: int = 15) -> List[Dict[str, Any]]:
+        rows = await self.fetch_all(
+            """
+            SELECT * FROM (
+                SELECT * FROM companion_chat_history
+                WHERE chat_id = ? AND user_id = ?
+                ORDER BY id DESC LIMIT ?
+            ) ORDER BY id ASC
+            """,
+            (chat_id, user_id, limit),
+        )
+        return [dict(r) for r in rows]
+
+    async def clear_companion_user_history(self, chat_id: int, user_id: int) -> int:
+        cursor = await self.execute(
+            "DELETE FROM companion_chat_history WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+        return cursor.rowcount

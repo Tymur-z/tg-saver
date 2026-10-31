@@ -102,6 +102,9 @@ class ChatContextBuffer:
         self._buffers: Dict[int, collections.deque[ChatMessageSnapshot]] = collections.defaultdict(
             lambda: collections.deque(maxlen=self.max_history)
         )
+        self._user_buffers: Dict[int, Dict[int, collections.deque[ChatMessageSnapshot]]] = collections.defaultdict(
+            lambda: collections.defaultdict(lambda: collections.deque(maxlen=10))
+        )
 
     def add_message(
         self,
@@ -127,6 +130,8 @@ class ChatContextBuffer:
             is_bot=is_bot,
         )
         self._buffers[chat_id].append(snapshot)
+        if not is_bot:
+            self._user_buffers[chat_id][user_id].append(snapshot)
 
     def get_context(self, chat_id: int, limit: int = 10) -> List[ChatMessageSnapshot]:
         buf = self._buffers.get(chat_id)
@@ -134,6 +139,27 @@ class ChatContextBuffer:
             return []
         items = list(buf)
         return items[-limit:]
+
+    def get_user_context(self, chat_id: int, user_id: int, limit: int = 5) -> List[ChatMessageSnapshot]:
+        ubuf = self._user_buffers.get(chat_id, {}).get(user_id)
+        if not ubuf:
+            return []
+        return list(ubuf)[-limit:]
+
+    def get_user_recent_summary(self, chat_id: int) -> str:
+        ubuf = self._user_buffers.get(chat_id)
+        if not ubuf:
+            return ""
+        lines = []
+        for uid, deque_msgs in ubuf.items():
+            if not deque_msgs:
+                continue
+            last_msg = deque_msgs[-1]
+            uname = f" (@{last_msg.username})" if last_msg.username else ""
+            lines.append(f"- {last_msg.user_name}{uname}: \"{last_msg.text}\"")
+        if not lines:
+            return ""
+        return "Недавние реплики участников беседы по персоналиям:\n" + "\n".join(lines)
 
     def format_context(self, chat_id: int, limit: int = 10) -> str:
         messages = self.get_context(chat_id, limit=limit)
@@ -148,11 +174,22 @@ class ChatContextBuffer:
                 u_str = f" (@{msg.username})" if msg.username else ""
                 sender = f"{msg.user_name}{u_str}"
             lines.append(f"[{sender}]: {msg.text}")
-        return "\n".join(lines)
+
+        res = "\n".join(lines)
+        user_summary = self.get_user_recent_summary(chat_id)
+        if user_summary:
+            res += f"\n\n[Сводка по участникам беседы]:\n{user_summary}"
+        return res
 
     def clear(self, chat_id: int) -> None:
         if chat_id in self._buffers:
             self._buffers[chat_id].clear()
+        if chat_id in self._user_buffers:
+            self._user_buffers[chat_id].clear()
+
+    def clear_user(self, chat_id: int, user_id: int) -> None:
+        if chat_id in self._user_buffers and user_id in self._user_buffers[chat_id]:
+            self._user_buffers[chat_id][user_id].clear()
 
 
 

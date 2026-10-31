@@ -33,6 +33,9 @@ from bot.keyboards.inline import (
     mod_strictness_select_kb,
     mod_whitelist_kb,
     mod_history_kb,
+    llm_random_select_kb,
+    mod_participants_list_kb,
+    mod_user_history_kb,
     llm_persona_select_kb,
     llm_trigger_select_kb,
     main_menu_kb,
@@ -197,18 +200,24 @@ async def cb_user_view(callback: CallbackQuery, db: Database, is_admin: bool = F
         f"• Дата регистрации: <code>{target.get('created_at', '')[:19]}</code>"
     )
 
+    caller_id = callback.from_user.id if callback.from_user else 0
+    is_owner_target = (target.get("role") == "owner" or target_id == settings.OWNER_ID)
+    is_self = (target_id == caller_id)
     await callback.message.edit_text(
         text,
-        reply_markup=user_card_kb(target, is_owner=(target.get("role") == "owner")),
+        reply_markup=user_card_kb(target, is_owner=is_owner_target, is_self=is_self),
         parse_mode="HTML",
     )
 
 
 @router.callback_query(F.data.startswith("user_block:"))
-async def cb_user_block(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cb_user_block(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False) -> None:
     if not is_admin:
         return
     target_id = int(callback.data.split(":")[1])
+    if target_id == settings.OWNER_ID or target_id == callback.from_user.id:
+        await callback.answer("⛔ Нельзя заблокировать главного владельца или самого себя!", show_alert=True)
+        return
     async with db.connect() as conn:
         user_repo = UserRepository(conn)
         await user_repo.set_blocked(target_id, True)
@@ -247,10 +256,13 @@ async def cb_user_role(callback: CallbackQuery, db: Database, is_admin: bool = F
 
 
 @router.callback_query(F.data.startswith("user_reset_auth:"))
-async def cb_user_reset_auth(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cb_user_reset_auth(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False) -> None:
     if not is_admin:
         return
     target_id = int(callback.data.split(":")[1])
+    if target_id == settings.OWNER_ID or target_id == callback.from_user.id:
+        await callback.answer("⛔ Нельзя сбросить авторизацию владельца!", show_alert=True)
+        return
     async with db.connect() as conn:
         user_repo = UserRepository(conn)
         await user_repo.set_authorized(target_id, False)
@@ -595,6 +607,7 @@ class AdminLLMStates(StatesGroup):
     waiting_for_base_url = State()
     waiting_for_context = State()
     waiting_for_tokens = State()
+    waiting_for_random_chance = State()
 
 
 class AdminModStates(StatesGroup):
@@ -1672,3 +1685,211 @@ async def cb_mod_view_history(callback: CallbackQuery, db: Database, is_admin: b
 
     await callback.message.edit_text(text, reply_markup=mod_history_kb(cid), parse_mode="HTML")
     await callback.answer()
+
+
+@router.callback_query(F.data == "noop")
+async def cb_noop(callback: CallbackQuery) -> None:
+    await callback.answer("👑 Это аккаунт Главного владельца системы. Он полностью защищён от блокировок и сброса.", show_alert=True)
+
+
+# ==================== RANDOM REPLIES MENU ====================
+
+@router.callback_query(F.data == "llm_select_random")
+async def cb_llm_select_random(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    async with db.connect() as conn:
+        curr = await ConfigRepository(conn).get_llm_config()
+    rand_chance = curr.get("companion_random_reply_chance", 0)
+
+    text = (
+        "💬 <b>Случайные реплики Ричарда (Инициатива в беседе):</b>\n\n"
+        "Определяет, с какой вероятностью Ричард будет <b>сам вступать в диалог участников</b> без прямого обращения по имени и без Reply:\n\n"
+        "• ⚪ <b>Выключено (0%)</b> — Ричард отвечает ТОЛЬКО когда его зовут по имени («Ричард») или делают Reply\n"
+        "• 🟢 <b>Редко (2%)</b> — ненавязчивое участие (~ 1 ответ на 50 сообщений)\n"
+        "• 🟡 <b>Умеренно (5%)</b> — живой сокурсник (~ 1 ответ на 20 сообщений)\n"
+        "• 🟠 <b>Активно (10%)</b> — активный собеседник (~ 1 ответ на 10 сообщений)\n"
+        "• ✏️ <b>Задать свой %</b> — точная настройка от 1% до 50%\n\n"
+        f"Текущая вероятность: <b>{rand_chance}%</b>"
+    )
+    await callback.message.edit_text(text, reply_markup=llm_random_select_kb(rand_chance), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("llm_set_random:"))
+async def cb_llm_set_random(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    val = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(random_reply_chance=val)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
+
+    if companion:
+        companion.update_config(random_reply_chance=val)
+
+    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
+    desc = f"{val}%" if val > 0 else "Выключено"
+    await callback.answer(f"Инициатива в чате: {desc}")
+
+
+@router.callback_query(F.data == "llm_custom_random")
+async def cb_llm_custom_random(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    await state.set_state(AdminLLMStates.waiting_for_random_chance)
+    await callback.message.edit_text(
+        "✏️ <b>Введите желаемую вероятность инициативы Ричарда (число от 0 до 50%):</b>\n\n"
+        "<i>Например: 3, 7, 15</i>",
+        reply_markup=llm_cancel_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminLLMStates.waiting_for_random_chance)
+async def proc_llm_custom_random(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        return
+
+    try:
+        val = int(message.text.strip().rstrip("%"))
+        if val < 0 or val > 50:
+            raise ValueError()
+    except ValueError:
+        await message.answer("❌ Введите целое число от 0 до 50. Попробуйте снова через /llm", reply_markup=admin_panel_kb())
+        await state.clear()
+        return
+
+    await state.clear()
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        await config_repo.set_llm_config(random_reply_chance=val)
+        text, is_on, conf = await _render_llm_settings(conn, settings)
+
+    if companion:
+        companion.update_config(random_reply_chance=val)
+
+    await message.answer(f"✅ <b>Вероятность инициативы установлена:</b> <code>{val}%</code>\n\n{text}", reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
+
+
+# ==================== PER-USER CONTEXT & MEMORY ====================
+
+@router.callback_query(F.data.startswith("mod_users_ctx:"))
+async def cb_mod_users_ctx(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    cid = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        participants = await chat_repo.get_companion_participants(cid)
+
+    if not participants:
+        text = (
+            f"👥 <b>Контекст участников в чате #{cid}:</b>\n\n"
+            "<i>(В этом чате пока нет зафиксированных сообщений участников в памяти Ричарда)</i>"
+        )
+        kb = mod_participants_list_kb(cid, [])
+    else:
+        div = "━━━━━━━━━━━━━━━━━━━━━━"
+        lines = [
+            f"👥 <b>Контекст участников в чате #{cid}:</b>",
+            f"<i>Зафиксировано участников: <b>{len(participants)}</b></i>",
+            div,
+        ]
+        for p in participants[:8]:
+            uname = f" (@{p['username']})" if p.get("username") else ""
+            lines.append(f"• 👤 <b>{p['user_name']}</b>{uname}: <code>{p['msg_count']}</code> сообщ.")
+        lines.append(div)
+        lines.append("👇 <i>Нажмите на участника ниже, чтобы посмотреть его историю или сбросить контекст:</i>")
+        text = "\n".join(lines)
+        kb = mod_participants_list_kb(cid, participants)
+
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mod_user_ctx:"))
+async def cb_mod_user_ctx(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    cid = int(parts[1])
+    uid = int(parts[2])
+
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        msgs = await chat_repo.get_companion_user_history(cid, uid, limit=10)
+
+    if not msgs:
+        text = f"👤 <b>История участника ID {uid} в чате #{cid} пуста.</b>"
+    else:
+        first_m = msgs[0]
+        uname = f" (@{first_m['username']})" if first_m.get("username") else ""
+        div = "━━━━━━━━━━━━━━━━━━━━━━"
+        lines = [
+            f"👤 <b>Контекст участника {first_m['user_name']}{uname}</b>",
+            f"🆔 <code>{uid}</code>  •  Чат: <code>#{cid}</code>",
+            div,
+            f"<i>Последние сохранённые реплики ({len(msgs)} шт.):</i>",
+        ]
+        for m in msgs:
+            txt = (m.get("text") or "").strip()
+            if len(txt) > 90:
+                txt = txt[:87] + "..."
+            lines.append(f"• <i>{txt}</i>")
+        lines.append(div)
+        text = "\n".join(lines)
+
+    await callback.message.edit_text(text, reply_markup=mod_user_history_kb(cid, uid), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mod_clear_user_ctx:"))
+async def cb_mod_clear_user_ctx(
+    callback: CallbackQuery,
+    db: Database,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    cid = int(parts[1])
+    uid = int(parts[2])
+
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        await chat_repo.clear_companion_user_history(cid, uid)
+
+    if companion:
+        companion.context_buffer.clear_user(cid, uid)
+
+    await callback.answer("Контекст участника успешно очищен!", show_alert=True)
+    await cb_mod_users_ctx(callback, db, is_admin=is_admin)
