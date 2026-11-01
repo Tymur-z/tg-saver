@@ -53,7 +53,10 @@ class ProfanityDetector:
         ),
         re.compile(r"б+л+я+([дdтt]|ть)?", re.IGNORECASE),
         re.compile(r"м+у+д+[аеиоукч]", re.IGNORECASE),
-        re.compile(r"п+и+д+[аоеи]?р", re.IGNORECASE),
+        re.compile(r"\bп?и+д+[аоеи]?р[а-яa-z]*", re.IGNORECASE),
+        re.compile(r"\bу+е+с+[ао]с\w*", re.IGNORECASE),
+        re.compile(r"\bу+е+п+л+[её]т\w*", re.IGNORECASE),
+        re.compile(r"\bи+з+д+[её]ц\w*", re.IGNORECASE),
         re.compile(r"ш+л+ю+х", re.IGNORECASE),
         re.compile(r"г+[ао]?н+д+[ао]?н", re.IGNORECASE),
         re.compile(r"\bс+у+к+[аеиыу]?\b", re.IGNORECASE),
@@ -90,8 +93,17 @@ class ProfanityDetector:
         re.compile(r"\bблин\b", re.IGNORECASE),
     ]
 
+    # 4. УСТОЙЧИВЫЕ ОСКОРБИТЕЛЬНЫЕ И МЕМНЫЕ ФРАЗЫ ("... ответ" и др.)
+    PHRASE_PATTERNS: List[re.Pattern[str]] = [
+        re.compile(r"\b(?:п?идор\w*|шлюх\w*|ху[ея]\w*|члена?)\s+ответ\b", re.IGNORECASE),
+        re.compile(r"\bответ\s+(?:п?идор\w*|шлюх\w*|ху[ея]\w*)\b", re.IGNORECASE),
+    ]
+
     # Белый список частых слов, содержащих похожие корни без мата
     WHITELIST_PATTERNS: List[re.Pattern[str]] = [
+        re.compile(r"^помидор[а-я]*", re.IGNORECASE),
+        re.compile(r"^коридор[а-я]*", re.IGNORECASE),
+        re.compile(r"^сидор[а-я]*", re.IGNORECASE),
         re.compile(r"^теб[ея]", re.IGNORECASE),
         re.compile(r"^себ[ея]", re.IGNORECASE),
         re.compile(r"^рубл[яейь]", re.IGNORECASE),
@@ -168,6 +180,17 @@ class ProfanityDetector:
                             confidence=1.0,
                             severity="custom",
                         )
+
+        # 0.2 Проверка устойчивых фраз и мемных обходов
+        for ppat in self.PHRASE_PATTERNS:
+            if ppat.search(normalized):
+                return ProfanityResult(
+                    is_profane=True,
+                    method="regex",
+                    reason="Обнаружен жесткий мат (оскорбительная фраза)",
+                    confidence=0.99,
+                    severity="hard",
+                )
 
         # 1. Проверка по токенам (обычные слова)
         tokens = re.findall(r"[а-яa-z0-9]+", normalized)

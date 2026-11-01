@@ -25,6 +25,10 @@ async def test_regex_profanity_detection() -> None:
         "Ну ты и пидорас",
         "Гандон штопаный",
         "Дай 100 рублей, блять",
+        "идора ответ",
+        "ну ты и идорас",
+        "уесос мелкий",
+        "это полный издец",
     ]
     for sample in profane_samples:
         res = await detector.check_text(sample)
@@ -50,6 +54,8 @@ async def test_regex_whitelist_clean_text() -> None:
         "Зеленый стебель",
         "Враждебный настрой",
         "Успехи в учебе",
+        "Спелый помидор",
+        "Длинный коридор",
     ]
     for sample in clean_samples:
         res = await detector.check_text(sample)
