@@ -46,7 +46,11 @@ class ProfanityDetector:
     HARD_PATTERNS: List[re.Pattern[str]] = [
         re.compile(r"х+у+[йиеяёюeja]", re.IGNORECASE),
         re.compile(r"п+и+з+д", re.IGNORECASE),
-        re.compile(r"([а-я]*[еёe]б[аеиоутылaeyut]|\b[еёe]б\b|долбо[еёe]б|выеб|уеб|въеб)", re.IGNORECASE),
+        re.compile(
+            r"\b(?!(?:теб[ея]|себ[ея]|хлеб\w*|стебел\w*|гребл\w*|хребет\w*|треб\w*|потреб\w*|колеб\w*|реб[её]н\w*|судеб\w*|враждеб\w*|учеб\w*|тереб\w*|небоскреб\w*|грабеж\w*|скреб\w*)\b)"
+            r"(?:[а-я]*(?:[еёe]б[аеиоутылaeyut]|[еёe]бл|[еёe]бн|[еёe]бк|[еёe]буч|[еёe]бот)|долбо[еёe]б|выеб\w*|заеб\w*|уеб\w*|наеб\w*|проеб\w*|перееб\w*|въеб\w*|подъеб\w*|\b[еёe]б\b)",
+            re.IGNORECASE,
+        ),
         re.compile(r"б+л+я+([дdтt]|ть)?", re.IGNORECASE),
         re.compile(r"м+у+д+[аеиоукч]", re.IGNORECASE),
         re.compile(r"п+и+д+[аоеи]?р", re.IGNORECASE),
@@ -88,6 +92,8 @@ class ProfanityDetector:
 
     # Белый список частых слов, содержащих похожие корни без мата
     WHITELIST_PATTERNS: List[re.Pattern[str]] = [
+        re.compile(r"^теб[ея]", re.IGNORECASE),
+        re.compile(r"^себ[ея]", re.IGNORECASE),
         re.compile(r"^рубл[яейь]", re.IGNORECASE),
         re.compile(r"^страхов[а-я]*", re.IGNORECASE),
         re.compile(r"^колебан[а-я]*", re.IGNORECASE),
@@ -102,6 +108,10 @@ class ProfanityDetector:
         re.compile(r"^потреб[а-я]*", re.IGNORECASE),
         re.compile(r"^гребл[яеиь]", re.IGNORECASE),
         re.compile(r"^дубрав[а-я]*", re.IGNORECASE),
+        re.compile(r"^хребет[а-я]*", re.IGNORECASE),
+        re.compile(r"^учеб[а-я]*", re.IGNORECASE),
+        re.compile(r"^судеб[а-я]*", re.IGNORECASE),
+        re.compile(r"^ребенок", re.IGNORECASE),
     ]
 
     def __init__(self, llm_client: Optional[LLMClient] = None, llm_enabled: bool = False) -> None:
@@ -197,12 +207,14 @@ class ProfanityDetector:
                             severity="mild",
                         )
 
-        # 2. Проверка слов, разделенных точками, пробелами или спецсимволами ('с.у.к.а', 'п и д о р')
-        alpha_only = re.sub(r"[^а-яa-z0-9]", "", normalized)
-        if alpha_only and len(alpha_only) >= 3:
-            if not any(wl.search(alpha_only) for wl in self.WHITELIST_PATTERNS):
+        # 2. Проверка слов, разделенных точками, пробелами или спецсимволами ('с.у.к.а', 'п и д о р', 'х_у_й')
+        # Ищем последовательности букв, разделенных точками, дефисами, звездочками или пробелами между буквами
+        spaced_blocks = re.findall(r"(?:[а-яa-z0-9][\s._\-*~]{1,2}){2,}[а-яa-z0-9]", normalized)
+        for block in spaced_blocks:
+            collapsed = re.sub(r"[^а-яa-z0-9]", "", block)
+            if len(collapsed) >= 3 and not any(wl.search(collapsed) for wl in self.WHITELIST_PATTERNS):
                 for pat in self.HARD_PATTERNS:
-                    if pat.search(alpha_only):
+                    if pat.search(collapsed):
                         return ProfanityResult(
                             is_profane=True,
                             method="regex",
@@ -213,7 +225,7 @@ class ProfanityDetector:
 
                 if strictness in ("medium", "all"):
                     for pat in self.MEDIUM_PATTERNS:
-                        if pat.search(alpha_only):
+                        if pat.search(collapsed):
                             return ProfanityResult(
                                 is_profane=True,
                                 method="regex",
@@ -224,7 +236,7 @@ class ProfanityDetector:
 
                 if strictness == "all":
                     for pat in self.MILD_PATTERNS:
-                        if pat.search(alpha_only):
+                        if pat.search(collapsed):
                             return ProfanityResult(
                                 is_profane=True,
                                 method="regex",
