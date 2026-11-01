@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -13,6 +13,7 @@ from database.repositories.profile_repo import ProfileRepository
 from analytics.comparator import StyleComparator
 from analytics.report_generator import ReportGenerator, make_progress_bar
 from bot.keyboards.inline import main_menu_kb, my_style_kb
+from moderation.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 router = Router(name="analytics_router")
@@ -126,10 +127,12 @@ async def cb_admin_all_profiles(event: Message | CallbackQuery, db: Database, is
 
             samples = p.get("sample_count", 0)
             avg_len = p.get("avg_sentence_len", 0.0)
+            summary = ReportGenerator.generate_style_summary(p)
 
             lines.append(
                 f"{idx}. {role_icon} {name_header}{owner_badge}\n"
-                f"    └ ID: <code>{uid}</code> • Сообщений: <b>{samples}</b> • Слов/предл: <b>{avg_len:.1f}</b>"
+                f"    ├ ID: <code>{uid}</code> • Сообщений: <b>{samples}</b> • Слов/предл: <b>{avg_len:.1f}</b>\n"
+                f"    └ 🧠 <i>{summary}</i>\n"
             )
 
             # Clean button text
@@ -155,7 +158,13 @@ async def cb_admin_all_profiles(event: Message | CallbackQuery, db: Database, is
 
 
 @router.callback_query(F.data.startswith("view_profile:"))
-async def cb_admin_view_profile(callback: CallbackQuery, db: Database, settings: Settings, is_admin: bool = False) -> None:
+async def cb_admin_view_profile(
+    callback: CallbackQuery,
+    db: Database,
+    settings: Settings,
+    is_admin: bool = False,
+    llm_client: Optional[LLMClient] = None,
+) -> None:
     if not is_admin:
         await callback.answer("⛔ Доступ только для администраторов.", show_alert=True)
         return
@@ -184,7 +193,25 @@ async def cb_admin_view_profile(callback: CallbackQuery, db: Database, settings:
         u_display = f"ID {target_uid}"
 
     label = f"{u_display} [ID: {target_uid}]" + (" 👑 [Владелец]" if is_owner else "")
-    report_html = ReportGenerator.generate_profile_report(profile, user_label=label)
+
+    recent_msgs: List[str] = []
+    try:
+        async with db.connect() as conn:
+            cursor = await conn.execute(
+                "SELECT text FROM companion_chat_history WHERE user_id = ? AND is_bot = 0 ORDER BY id DESC LIMIT 6",
+                (target_uid,),
+            )
+            rows = await cursor.fetchall()
+            recent_msgs = [r["text"] for r in rows if r["text"]]
+    except Exception:
+        pass
+
+    ai_summary = await ReportGenerator.generate_ai_style_summary(
+        profile,
+        llm_client=llm_client,
+        recent_messages=recent_msgs,
+    )
+    report_html = ReportGenerator.generate_profile_report(profile, user_label=label, ai_summary=ai_summary)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⬅️ Ко всем профилям", callback_data="admin_all_profiles")],

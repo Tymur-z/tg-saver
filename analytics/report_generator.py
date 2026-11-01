@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import json
+import logging
+from typing import Any, Dict, List, Optional
 
 from analytics.confidence import ConfidenceEvaluator
+
+logger = logging.getLogger(__name__)
 
 
 def make_progress_bar(current: int, total: int, length: int = 10) -> str:
@@ -18,15 +22,173 @@ class ReportGenerator:
     DIVIDER = "━━━━━━━━━━━━━━━━━━━━━━"
 
     @classmethod
-    def generate_profile_report(cls, profile: Dict[str, Any], user_label: str = "Участник") -> str:
+    def generate_style_summary(cls, profile: Dict[str, Any]) -> str:
+        """Формирует емкую и точную характеристику стиля речи участника на основе стилометрии."""
+        sample_count = profile.get("sample_count", 0)
+        if sample_count < 2:
+            return "Недостаточно данных для анализа речи (требуется больше сообщений)."
+
+        traits: List[str] = []
+
+        # 1. Темп и длина предложений
+        avg_sent = profile.get("avg_sentence_len", 0.0)
+        if avg_sent < 4.0:
+            traits.append("быстрый темп короткими репликами (2-4 слова)")
+        elif avg_sent <= 7.5:
+            traits.append(f"умеренный темп (ёмкие реплики ~{avg_sent:.0f} слов)")
+        else:
+            traits.append("развёрнутая подача мысли и подробные фразы")
+
+        # 2. Пунктуация и оформление
+        punct = profile.get("punctuation_stats", {})
+        if isinstance(punct, str):
+            try:
+                punct = json.loads(punct)
+            except Exception:
+                punct = {}
+        no_dot_pct = punct.get("no_trailing_dot_pct", 0.0)
+        brackets = punct.get("total_bracket_smiles", 0)
+        questions = punct.get("total_questions", 0)
+        exclamations = punct.get("total_exclamations", 0)
+
+        if no_dot_pct >= 70.0:
+            traits.append("неформальный стиль без точек на конце")
+        elif no_dot_pct <= 30.0 and sample_count >= 5:
+            traits.append("строгая пунктуация с завершающими точками")
+
+        if brackets >= 3:
+            traits.append("часто использует скобки-смайлики )")
+
+        if questions >= 5 and questions > exclamations * 1.5:
+            traits.append("часто задаёт вопросы и вовлекает в беседу")
+        elif exclamations >= 5 and exclamations > questions:
+            traits.append("эмоционально экспрессивный стиль")
+
+        # 3. Эмодзи
+        emojis = profile.get("emoji_stats", {})
+        if isinstance(emojis, str):
+            try:
+                emojis = json.loads(emojis)
+            except Exception:
+                emojis = {}
+        total_emojis = emojis.get("total_emojis", 0)
+        emojis_per_msg = total_emojis / max(1, sample_count)
+        if total_emojis == 0 and sample_count >= 5:
+            traits.append("полное отсутствие эмодзи (чистый текст)")
+        elif emojis_per_msg >= 0.8:
+            traits.append("активная иллюстрация эмодзи")
+
+        # 4. Сленг и акценты
+        formality = profile.get("formality_markers", {})
+        if isinstance(formality, str):
+            try:
+                formality = json.loads(formality)
+            except Exception:
+                formality = {}
+        slang_cnt = formality.get("slang_markers", 0)
+        caps_cnt = formality.get("all_caps_words", 0)
+        if slang_cnt >= 2:
+            traits.append("активное употребление сленга")
+        if caps_cnt >= 5:
+            traits.append("периодический эмоциональный акцент капсом")
+
+        # 5. Пик активности
+        activity = profile.get("activity_hours", {})
+        if isinstance(activity, str):
+            try:
+                activity = json.loads(activity)
+            except Exception:
+                activity = {}
+        if activity:
+            try:
+                peak_h = int(max(activity.items(), key=lambda x: x[1])[0])
+                if 0 <= peak_h < 5:
+                    time_desc = "ночной пик активности"
+                elif 5 <= peak_h < 12:
+                    time_desc = "утренняя активность"
+                elif 12 <= peak_h < 18:
+                    time_desc = "дневной пик активности"
+                else:
+                    time_desc = "вечерний пик активности"
+                traits.append(time_desc)
+            except Exception:
+                pass
+
+        if not traits:
+            return "Сбалансированный стиль общения, нейтральная подача реплик."
+
+        res = ", ".join(traits)
+        return res[0].upper() + res[1:] + "."
+
+    @classmethod
+    async def generate_ai_style_summary(
+        cls,
+        profile: Dict[str, Any],
+        llm_client: Any = None,
+        recent_messages: Optional[List[str]] = None,
+    ) -> str:
+        """Генерирует интеллектуальное психолингвистическое резюме стиля через LLM с откатом на базовую стилометрию."""
+        rule_summary = cls.generate_style_summary(profile)
+        if not llm_client or not getattr(llm_client, "api_key", None):
+            return rule_summary
+
+        sample_count = profile.get("sample_count", 0)
+        if sample_count < 2:
+            return rule_summary
+
+        metrics_info = (
+            f"Сообщений: {sample_count}, "
+            f"Слов в среднем на фразу: {profile.get('avg_sentence_len', 0.0):.1f}, "
+            f"Базовые черты: {rule_summary}"
+        )
+        samples_text = ""
+        if recent_messages:
+            samples_text = "Примеры недавних реплик:\n" + "\n".join(f"- \"{m[:100]}\"" for m in recent_messages[:6])
+
+        prompt_system = (
+            "Ты — профессиональный психолингвист и эксперт по речевому профилированию в Telegram.\n"
+            "На основе стилометрических метрик и примеров реплик напиши краткую, живую и точную характеристику стиля общения человека "
+            "(строго 1-2 ёмких предложения на русском языке).\n"
+            "Опиши манеру речи, темп, эмоциональность и подачу. Пиши увлекательно, без канцеляризмов."
+        )
+        user_prompt = f"Метрики стиля:\n{metrics_info}\n\n{samples_text}"
+        try:
+            resp = await llm_client.chat_completion(
+                [
+                    {"role": "system", "content": prompt_system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=120,
+            )
+            if resp and len(resp.strip()) >= 15:
+                return resp.strip()
+        except Exception as e:
+            logger.debug("Could not generate AI style summary: %s", e)
+
+        return rule_summary
+
+    @classmethod
+    def generate_profile_report(
+        cls,
+        profile: Dict[str, Any],
+        user_label: str = "Участник",
+        ai_summary: Optional[str] = None,
+    ) -> str:
         sample_count = profile.get("sample_count", 0)
         confidence = ConfidenceEvaluator.evaluate(sample_count, profile)
+
+        if not ai_summary:
+            ai_summary = cls.generate_style_summary(profile)
 
         if not confidence.is_statistically_valid:
             bar = make_progress_bar(sample_count, ConfidenceEvaluator.MIN_THRESHOLD)
             pct = int((sample_count / ConfidenceEvaluator.MIN_THRESHOLD) * 100)
             lines = [
                 f"📊 <b>Аналитический профиль стиля:</b> {user_label}",
+                cls.DIVIDER,
+                "🧠 <b>Сводка стиля общения:</b>",
+                f"<i>{ai_summary}</i>",
                 cls.DIVIDER,
                 "⏳ <b>Статус накопления базы:</b>",
                 f"<code>[{bar}] {sample_count} / {ConfidenceEvaluator.MIN_THRESHOLD} сообщ. ({pct}%)</code>\n",
@@ -69,6 +231,9 @@ class ReportGenerator:
 
         lines: List[str] = [
             f"📊 <b>Аналитический профиль стиля:</b> {user_label}",
+            cls.DIVIDER,
+            "🧠 <b>Сводка стиля общения:</b>",
+            f"<i>{ai_summary}</i>",
             cls.DIVIDER,
             f"📈 <b>Объём выборки:</b> <code>{sample_count} сообщ.</code> • <code>{total_words} слов</code> (<code>{total_chars} знаков</code>)",
             f"🎯 <b>Надёжность данных:</b> {conf_badge}",

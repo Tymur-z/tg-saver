@@ -369,8 +369,22 @@ async def handle_incoming_message(
                 is_profileable = False
 
         if is_profileable:
-            text = MediaHandler.get_text_or_caption(message)
-            if text.strip():
+            text = MediaHandler.get_text_or_caption(message) or transcribed_speech or ""
+            if not text and (getattr(message, "voice", None) or getattr(message, "video_note", None)):
+                if stt_service and stt_service.is_available():
+                    try:
+                        file_obj = message.voice or message.video_note
+                        text = await stt_service.transcribe_telegram_file(message.bot, file_obj.file_id) or ""
+                    except Exception as stt_err:
+                        logger.warning("STT profiling transcribe error: %s", stt_err)
+
+            # Strip voice/circle message tag prefixes if present
+            if text.startswith("🗣️ [Кружок]: "):
+                text = text[len("🗣️ [Кружок]: "):]
+            elif text.startswith("🗣️ [Голосовое]: "):
+                text = text[len("🗣️ [Голосовое]: "):]
+
+            if text and text.strip():
                 user_id = message.from_user.id
                 chat_id = message.chat.id
                 is_owner = bool(settings.OWNER_ID > 0 and user_id == settings.OWNER_ID)
