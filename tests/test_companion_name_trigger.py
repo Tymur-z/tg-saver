@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from aiogram.types import Message, Chat, User
@@ -34,6 +34,22 @@ def test_companion_triggers_by_name():
     trig3, prompt3 = companion.is_triggered(msg3, bot_username="RichardHelperBot", bot_id=777)
     assert trig3 is True
     assert "подскажи тему" in prompt3
+
+    # In parentheses: "(Ричард) если я..."
+    msg_paren = make_msg("Слышишь ты на раф на кокосовом(Ричард) если я выбесила")
+    trig_paren, prompt_paren = companion.is_triggered(msg_paren, bot_username="RichardHelperBot", bot_id=777)
+    assert trig_paren is True
+
+    # "Рикардо"
+    msg_ricardo = make_msg("Рикардо ты недоделанный смотри")
+    trig_ricardo, prompt_ricardo = companion.is_triggered(msg_ricardo, bot_username="RichardHelperBot", bot_id=777)
+    assert trig_ricardo is True
+    assert "недоделанный" in prompt_ricardo
+
+    # "Ричи"
+    msg_richie = make_msg("Эй, Ричи, привет!")
+    trig_richie, prompt_richie = companion.is_triggered(msg_richie, bot_username="RichardHelperBot", bot_id=777)
+    assert trig_richie is True
 
     # Negative: not addressed
     msg4 = make_msg("обычное сообщение в чате без упоминания")

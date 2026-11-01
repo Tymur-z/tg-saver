@@ -378,8 +378,13 @@ class ChatCompanion:
                         has_mention = True
                         break
 
-        # Check for direct name addressing ("ричард", "richard")
-        has_name_call = bool(re.search(r"(?:^|[\s,!?])(ричард|richard)(?:[\s,!?]|$)", lower_text, re.IGNORECASE))
+        # Check for direct name addressing ("ричард", "richard", "рикардо", "ричи", etc.)
+        NAME_PATTERN = (
+            r"(?:^|[^\w])"
+            r"(ричард[а-я]*|richard\w*|ричи|richie|ричик|рикардо|ricardo|ричуля|рича)"
+            r"(?:[^\w]|$)"
+        )
+        has_name_call = bool(re.search(NAME_PATTERN, lower_text, re.IGNORECASE))
 
         if not is_reply_to_bot and not has_mention and not has_name_call:
             return False, ""
@@ -391,10 +396,20 @@ class ChatCompanion:
             clean_prompt = pattern.sub("", clean_prompt).strip()
 
         # Clean name invocation at start or boundaries
-        clean_prompt = re.sub(r"^(?:ричард|richard)[,\s:!-]+", "", clean_prompt, flags=re.IGNORECASE).strip()
-        clean_prompt = re.sub(r"(?:^|[\s,])(?:ричард|richard)(?:[\s,]|$)", " ", clean_prompt, flags=re.IGNORECASE).strip()
+        clean_prompt = re.sub(
+            r"^(?:ричард[а-я]*|richard\w*|ричи|richie|ричик|рикардо|ricardo|ричуля|рича)[,\s:!-]+",
+            "",
+            clean_prompt,
+            flags=re.IGNORECASE,
+        ).strip()
+        clean_prompt = re.sub(
+            r"(?:^|[^\w])(?:ричард[а-я]*|richard\w*|ричи|richie|ричик|рикардо|ricardo|ричуля|рича)(?:[^\w]|$)",
+            " ",
+            clean_prompt,
+            flags=re.IGNORECASE,
+        ).strip()
 
-        if not clean_prompt:
+        if not clean_prompt or not re.search(r"\w", clean_prompt):
             clean_prompt = "Привет!"
 
         return True, clean_prompt

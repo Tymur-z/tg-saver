@@ -172,6 +172,7 @@ async def handle_incoming_message(
 
     chat = None
     is_profane = False
+    is_deleted = False
     transcribed_speech = None
 
     has_priv_audio = bool(getattr(message, "voice", None) or getattr(message, "video_note", None))
@@ -308,6 +309,7 @@ async def handle_incoming_message(
                         if chat.get("profanity_delete_enabled"):
                             try:
                                 await message.delete()
+                                is_deleted = True
                             except Exception as del_err:
                                 logger.warning("Could not delete message in %s: %s", message.chat.id, del_err)
 
@@ -328,7 +330,7 @@ async def handle_incoming_message(
             logger.exception("Error during chat settings check for message %s: %s", message.message_id, mod_err)
 
     # Save to context buffer for companion awareness (RAM + Persistent SQLite)
-    if companion and not is_profane and msg_text:
+    if companion and not is_deleted and msg_text:
         u_name = message.from_user.full_name if message.from_user else "Участник"
         u_username = message.from_user.username if message.from_user else None
         companion.context_buffer.add_message(
@@ -357,7 +359,7 @@ async def handle_incoming_message(
     except Exception as e:
         logger.exception("Error forwarding message %s: %s", message.message_id, e)
 
-    if settings.ANALYTICS_ENABLED and message.from_user and not is_profane and message.from_user.id not in TELEGRAM_SYSTEM_BOT_IDS:
+    if settings.ANALYTICS_ENABLED and message.from_user and message.from_user.id not in TELEGRAM_SYSTEM_BOT_IDS:
         is_profileable = message.chat.type in ("group", "supergroup", "channel")
         if not is_profileable and message.chat.type == "private":
             try:
@@ -404,7 +406,7 @@ async def handle_incoming_message(
                     logger.exception("Error profiling message %s: %s", message.message_id, e)
 
     # Companion conversation handler
-    if companion and not is_profane:
+    if companion and not is_deleted:
         is_chat_ai_allowed = False
         if message.chat.type in ("group", "supergroup"):
             if chat:
