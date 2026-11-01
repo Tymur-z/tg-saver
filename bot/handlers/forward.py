@@ -102,6 +102,26 @@ def is_transcription_request(text: str) -> bool:
             return True
     return False
 
+
+def resolve_friendly_name(user: Optional[User]) -> str:
+    """Returns a friendly, casual chat name for participants, avoiding robotic titles or raw display names."""
+    if not user:
+        return "Участник"
+    if user.id == 1696889505 or (user.username and user.username.lower() in ("ciel_hleb", "sol", "соль")):
+        return "Соль"
+    if user.id == 911338473 or (user.username and user.username.lower() == "tymur2000"):
+        return "Тимур"
+    if user.id == 5848551858 or (user.username and user.username.lower() == "msvp2055"):
+        return "Миша"
+    if user.id == 5985808271 or (user.username and user.username.lower() == "ishowdealer"):
+        return "форсаж"
+    fn = user.first_name or ""
+    if "сілл" in fn.lower() or "соль" in fn.lower():
+        return "Соль"
+    clean_fn = re.sub(r"[^\w\sа-яА-ЯёЁa-zA-Z0-9_-]", "", fn).strip()
+    return clean_fn if clean_fn else (user.username or "Участник")
+
+
 @router.message()
 async def handle_incoming_message(
     message: Message,
@@ -331,7 +351,7 @@ async def handle_incoming_message(
 
     # Save to context buffer for companion awareness (RAM + Persistent SQLite)
     if companion and not is_deleted and msg_text:
-        u_name = message.from_user.full_name if message.from_user else "Участник"
+        u_name = resolve_friendly_name(message.from_user)
         u_username = message.from_user.username if message.from_user else None
         companion.context_buffer.add_message(
             chat_id=message.chat.id,
@@ -434,7 +454,7 @@ async def handle_incoming_message(
                 if triggered and prompt:
                     if companion.typing_indicator:
                         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-                    caller_name = message.from_user.first_name if message.from_user else "Собеседник"
+                    caller_name = resolve_friendly_name(message.from_user)
                     is_owner = bool(settings.OWNER_ID > 0 and message.from_user and message.from_user.id == settings.OWNER_ID)
 
                     # Ensure RAM buffer has persistent history if buffer is empty
@@ -497,9 +517,7 @@ async def handle_incoming_message(
                     # If this is a reply to another message, enrich companion with replied content
                     replied_msg = message.reply_to_message
                     if replied_msg:
-                        author_name = replied_msg.from_user.first_name if replied_msg.from_user else "Участник"
-                        if replied_msg.from_user and replied_msg.from_user.username:
-                            author_name += f" (@{replied_msg.from_user.username})"
+                        author_name = resolve_friendly_name(replied_msg.from_user)
 
                         has_rep_audio = bool(getattr(replied_msg, "voice", None) or getattr(replied_msg, "video_note", None) or getattr(replied_msg, "audio", None))
                         if has_rep_audio and stt_service and stt_service.is_available():
@@ -512,18 +530,21 @@ async def handle_incoming_message(
                                     file_id=r_media.file_id,
                                     file_unique_id=r_media.file_unique_id,
                                     suffix=r_suffix,
+                                    language_code="ru-RU",
                                 )
                                 if r_transcript:
                                     extra_context += (
-                                        f"\n[Контекст: пользователь {caller_name} обращается к тебе по поводу {r_tag.lower()} от {author_name}. "
-                                        f"В этом сообщении было сказано: \"{r_transcript}\"]"
+                                        f"\n[Контекст реплая: {caller_name} обращается к тебе в ответ на {r_tag.lower()} от {author_name}. "
+                                        f"В этом голосовом/кружке было сказано: \"{r_transcript}\". "
+                                        f"Ответь остроумно и конкретно по смыслу сказанного в этом сообщении!]"
                                     )
                             except Exception as rep_err:
                                 logger.debug("Could not transcribe replied media for companion: %s", rep_err)
                         elif replied_msg.text or replied_msg.caption:
                             rep_text = (replied_msg.text or replied_msg.caption)[:350]
                             extra_context += (
-                                f"\n[Контекст: пользователь {caller_name} отвечает на сообщение от {author_name}: \"{rep_text}\"]"
+                                f"\n[Контекст реплая: {caller_name} обращается в ответ на сообщение от {author_name}: \"{rep_text}\". "
+                                f"Ответь остроумно и прямо по смыслу того, что написано в этом цитируемом сообщении!]"
                             )
 
                     reply_text = await companion.generate_reply(
