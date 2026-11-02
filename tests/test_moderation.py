@@ -56,6 +56,10 @@ async def test_regex_whitelist_clean_text() -> None:
         "Успехи в учебе",
         "Спелый помидор",
         "Длинный коридор",
+        "П0хпхахахахаха",
+        "Ахахах",
+        "пхпхпх",
+        "хддд",
     ]
     for sample in clean_samples:
         res = await detector.check_text(sample)
