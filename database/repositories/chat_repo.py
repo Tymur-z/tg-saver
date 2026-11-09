@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from database.repositories.base import BaseRepository
 
@@ -308,6 +310,84 @@ class ChatRepository(BaseRepository):
         )
         return [dict(r) for r in rows]
 
+    async def get_compressed_history(self, chat_id: int, raw_limit: int = 80) -> List[Dict[str, Any]]:
+        """
+        Fetches up to raw_limit messages and compresses repetitive noise (repeated laughs, sticker spam).
+        Returns a dense sequence of conversation turns preserving full semantics.
+        """
+        raw_rows = await self.fetch_all(
+            "SELECT * FROM (SELECT * FROM companion_chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
+            (chat_id, raw_limit),
+        )
+        if not raw_rows:
+            return []
+
+        compressed: List[Dict[str, Any]] = []
+        laugh_pattern = re.compile(r"^(?:ха|хе|хи|хо|пх|ах|хп|лол|lol|lmao|\s)+$", re.IGNORECASE)
+
+        for r in raw_rows:
+            d = dict(r)
+            text = (d.get("text") or "").strip()
+            if not text:
+                continue
+
+            is_laugh = bool(laugh_pattern.match(text) and len(text) >= 4)
+            is_sticker = text.startswith("[Стикер")
+
+            if compressed:
+                prev = compressed[-1]
+                if prev["user_name"] == d["user_name"] and is_laugh and prev.get("is_laugh"):
+                    continue
+                if prev["user_name"] == d["user_name"] and is_sticker and prev.get("is_sticker"):
+                    count = prev.get("sticker_count", 1) + 1
+                    prev["sticker_count"] = count
+                    prev["text"] = f"[отправил {count} стикеров]"
+                    continue
+
+            d["is_laugh"] = is_laugh
+            if is_sticker:
+                d["is_sticker"] = True
+                d["sticker_count"] = 1
+            compressed.append(d)
+
+        return compressed[-35:]
+
+    async def get_daily_memory(self, chat_id: int, date_str: str) -> Optional[Dict[str, Any]]:
+        row = await self.fetch_one(
+            "SELECT * FROM chat_daily_memories WHERE chat_id = ? AND date_str = ?",
+            (chat_id, date_str),
+        )
+        if not row:
+            return None
+        res = dict(row)
+        try:
+            res["key_facts"] = json.loads(res["key_facts"]) if isinstance(res["key_facts"], str) else (res["key_facts"] or [])
+        except Exception:
+            res["key_facts"] = []
+        return res
+
+    async def upsert_daily_memory(
+        self,
+        chat_id: int,
+        date_str: str,
+        summary: str,
+        key_facts: List[str] | str,
+        last_msg_id: int = 0,
+    ) -> None:
+        facts_str = json.dumps(key_facts, ensure_ascii=False) if isinstance(key_facts, list) else str(key_facts)
+        await self.execute(
+            """
+            INSERT INTO chat_daily_memories (chat_id, date_str, summary, key_facts, last_msg_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(chat_id, date_str) DO UPDATE SET
+                summary = excluded.summary,
+                key_facts = excluded.key_facts,
+                last_msg_id = MAX(chat_daily_memories.last_msg_id, excluded.last_msg_id),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (chat_id, date_str, summary.strip(), facts_str, last_msg_id),
+        )
+
     async def clear_companion_history(self, chat_id: int) -> int:
         cursor = await self.execute("DELETE FROM companion_chat_history WHERE chat_id = ?", (chat_id,))
         return cursor.rowcount
@@ -361,3 +441,32 @@ class ChatRepository(BaseRepository):
             (chat_id, user_id),
         )
         return cursor.rowcount
+
+    async def add_recent_photo(
+        self,
+        chat_id: int,
+        message_id: int,
+        user_id: int,
+        user_name: str,
+        file_id: str,
+        file_unique_id: str,
+        caption: str = "",
+    ) -> None:
+        await self.execute(
+            """
+            INSERT INTO chat_recent_photos (chat_id, message_id, user_id, user_name, file_id, file_unique_id, caption)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (chat_id, message_id, user_id, user_name, file_id, file_unique_id, caption[:500]),
+        )
+
+    async def get_last_recent_photo(self, chat_id: int) -> Optional[Dict[str, Any]]:
+        row = await self.fetch_one(
+            """
+            SELECT * FROM chat_recent_photos
+            WHERE chat_id = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (chat_id,),
+        )
+        return dict(row) if row else None

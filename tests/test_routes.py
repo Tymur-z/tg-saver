@@ -71,4 +71,4 @@ async def test_route_repository_crud(test_db: Database):
         assert r["filter_keywords"] == []
 
         assert await route_repo.delete_route(created["id"]) is True
-        assert await route_repo.get_route(created["id"]) is None
+        assert await route_repo.get_route(created["id"]) is None

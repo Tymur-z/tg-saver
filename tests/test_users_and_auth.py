@@ -226,3 +226,22 @@ async def test_subadmin_moderation_filtered_by_membership(test_db: Database) -> 
 
     await cb_chat_moderation_view(other_cb, test_db, is_admin=True, is_subadmin=True)
     other_cb.answer.assert_called_with("⛔ Вы можете модерировать только те группы, в которых состоите.", show_alert=True)
+
+
+@pytest.mark.asyncio
+async def test_cmd_admin_panel(test_db: Database) -> None:
+    from bot.handlers.admin import cmd_admin_panel
+    from config.settings import Settings
+    from aiogram.types import Message
+
+    settings = Settings(BOT_TOKEN="123:ABC", OWNER_ID=911338473)
+    mock_msg = MagicMock(spec=Message)
+    mock_msg.answer = AsyncMock()
+
+    await cmd_admin_panel(mock_msg, test_db, settings, is_admin=True, is_subadmin=False)
+    mock_msg.answer.assert_awaited_once()
+    text = mock_msg.answer.call_args[0][0]
+    assert "Панель Администратора" in text
+    assert "ИИ-собеседник" in text
+    assert "Дневная память" in text
+

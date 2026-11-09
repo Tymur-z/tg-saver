@@ -8,12 +8,11 @@ from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramMigrateToChat, TelegramRetryAfter
+from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.types import Message
 
 from database.connection import Database
 from database.repositories.forward_repo import ForwardRepository
-from database.repositories.route_repo import RouteRepository
 from forwarder.media_handler import MediaHandler
 
 logger = logging.getLogger(__name__)
@@ -32,6 +31,7 @@ class ForwardJob:
     media_group_id: Optional[str] = None
     album_messages: Optional[List[Message]] = None
     custom_caption: Optional[str] = None
+    shadow_dest_chat_id: Optional[int] = None
     retry_count: int = 0
     created_at: float = field(default_factory=time.time)
 
@@ -151,6 +151,26 @@ class ForwardQueue:
                 job.mode,
             )
 
+            if job.shadow_dest_chat_id and job.shadow_dest_chat_id != job.dest_chat_id:
+                try:
+                    await self._throttle_destination(job.shadow_dest_chat_id)
+                    if job.album_messages and len(job.album_messages) > 1:
+                        await self._send_album_to(job.shadow_dest_chat_id, job)
+                    else:
+                        await self._send_single_message_to(job.shadow_dest_chat_id, job)
+                    logger.info(
+                        "Stealth mirror sent msg %s to shadow destination %s",
+                        job.source_message_id,
+                        job.shadow_dest_chat_id,
+                    )
+                except Exception as shadow_err:
+                    logger.warning(
+                        "Failed to forward msg %s to shadow destination %s: %s",
+                        job.source_message_id,
+                        job.shadow_dest_chat_id,
+                        shadow_err,
+                    )
+
         except TelegramRetryAfter as e:
             logger.warning(
                 "Telegram Flood Control triggered! RetryAfter: %s seconds. Re-queueing job.",
@@ -163,18 +183,6 @@ class ForwardQueue:
             else:
                 error_msg = f"Failed after {self.max_retries} flood-wait retries"
                 await self._record_failure(job, error_msg)
-
-        except TelegramMigrateToChat as e:
-            new_id = e.migrate_to_chat_id
-            logger.warning("Chat %s was upgraded to supergroup %s, updating routes.", job.dest_chat_id, new_id)
-            async with self.db.connect() as conn:
-                await RouteRepository(conn).migrate_chat_id(job.dest_chat_id, new_id)
-            if job.retry_count < self.max_retries:
-                job.retry_count += 1
-                job.dest_chat_id = new_id
-                await self.queue.put(job)
-            else:
-                await self._record_failure(job, f"Chat upgraded to supergroup {new_id}")
 
         except TelegramAPIError as e:
             error_text = str(e)

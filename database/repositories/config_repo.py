@@ -171,3 +171,37 @@ class ConfigRepository(BaseRepository):
         if language is not None:
             await self.set_value("stt_language", language.strip())
         return await self.get_stt_config()
+
+    async def get_vision_config(
+        self,
+        default_enabled: bool = True,
+        default_max_dimension: int = 1024,
+        default_detail: str = "auto",
+    ) -> Dict[str, Any]:
+        enabled_val = await self.get_value("vision_enabled", "1" if default_enabled else "0")
+        max_dim_val = await self.get_value("vision_max_dimension", str(default_max_dimension))
+        detail_val = await self.get_value("vision_detail", default_detail)
+        try:
+            dim_int = int(max_dim_val) if max_dim_val else default_max_dimension
+        except ValueError:
+            dim_int = default_max_dimension
+
+        return {
+            "vision_enabled": enabled_val == "1",
+            "vision_max_dimension": dim_int,
+            "vision_detail": detail_val or "auto",
+        }
+
+    async def set_vision_config(
+        self,
+        enabled: Optional[bool] = None,
+        max_dimension: Optional[int] = None,
+        detail: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if enabled is not None:
+            await self.set_value("vision_enabled", "1" if enabled else "0")
+        if max_dimension is not None:
+            await self.set_value("vision_max_dimension", str(max_dimension))
+        if detail is not None:
+            await self.set_value("vision_detail", detail.strip())
+        return await self.get_vision_config()

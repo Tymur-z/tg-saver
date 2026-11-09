@@ -19,6 +19,7 @@ from moderation.llm_client import LLMClient
 from moderation.profanity import ProfanityDetector
 from moderation.companion import ChatCompanion
 from moderation.stt_service import NvidiaSTTService
+from moderation.vision_service import VisionService
 from bot.middlewares.auth import UserAuthMiddleware
 from bot.middlewares.album import MediaGroupMiddleware
 from bot.handlers import (
@@ -49,6 +50,7 @@ def create_dispatcher(
     llm_client: Optional[LLMClient] = None,
     companion: Optional[ChatCompanion] = None,
     stt_service: Optional[NvidiaSTTService] = None,
+    vision_service: Optional[VisionService] = None,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
 
@@ -65,6 +67,8 @@ def create_dispatcher(
         dp["companion"] = companion
     if stt_service:
         dp["stt_service"] = stt_service
+    if vision_service:
+        dp["vision_service"] = vision_service
 
     auth_middleware = UserAuthMiddleware(db=db, settings=settings)
     dp.message.outer_middleware(auth_middleware)
@@ -85,6 +89,44 @@ def create_dispatcher(
     dp.include_router(forward_router)
 
     return dp
+
+
+async def setup_bot_commands(bot: Bot, settings: Settings) -> None:
+    try:
+        from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
+
+        default_commands = [
+            BotCommand(command="start", description="Главное меню бота"),
+            BotCommand(command="help", description="Справка по командам"),
+            BotCommand(command="status", description="Статус бота и очереди"),
+            BotCommand(command="analytics", description="Статистика и аналитика"),
+            BotCommand(command="privacy", description="Настройки приватности"),
+        ]
+        await bot.set_my_commands(default_commands, scope=BotCommandScopeDefault())
+
+        if settings.OWNER_ID > 0:
+            admin_commands = [
+                BotCommand(command="admin", description="Панель администратора"),
+                BotCommand(command="moderation", description="Настройки модерации и чатов"),
+                BotCommand(command="llm", description="Настройки ИИ Ричарда"),
+                BotCommand(command="stt", description="Настройки распознавания речи"),
+                BotCommand(command="routes", description="Маршруты пересылки"),
+                BotCommand(command="status", description="Статус бота и очереди"),
+                BotCommand(command="analytics", description="Аналитика и профили"),
+                BotCommand(command="users", description="Управление пользователями"),
+                BotCommand(command="help", description="Справка"),
+            ]
+            await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=settings.OWNER_ID))
+
+        await bot.set_my_description(
+            "Ричард — ИИ-собеседник для компании друзей, автоматический расшифровщик кружочков и голосовых сообщений (STT) и медиа-архиватор."
+        )
+        await bot.set_my_short_description(
+            "Ричард: ИИ-собеседник, расшифровка кружков/голосовых и пересылка медиа."
+        )
+        logger.info("Bot commands and descriptions synchronized with Telegram API.")
+    except Exception as e:
+        logger.warning("Could not synchronize bot commands with Telegram API: %s", e)
 
 
 async def start_application(settings: Settings) -> None:
@@ -114,6 +156,11 @@ async def start_application(settings: Settings) -> None:
             default_function_id=settings.STT_FUNCTION_ID,
             default_uri=settings.STT_URI,
             default_language=settings.STT_LANGUAGE,
+        )
+        vision_conf = await config_repo.get_vision_config(
+            default_enabled=settings.VISION_ENABLED,
+            default_max_dimension=settings.VISION_MAX_DIMENSION,
+            default_detail=settings.VISION_DETAIL,
         )
 
     bot = create_bot(settings)
@@ -154,6 +201,12 @@ async def start_application(settings: Settings) -> None:
         language_code=stt_conf.get("stt_language", "ru-RU"),
         enabled=stt_conf.get("stt_enabled", True),
     )
+    vision_service = VisionService(
+        llm_client=llm_client,
+        enabled=vision_conf.get("vision_enabled", True),
+        max_dimension=vision_conf.get("vision_max_dimension", 1024),
+        detail=vision_conf.get("vision_detail", "auto"),
+    )
 
     dp = create_dispatcher(
         settings=settings,
@@ -165,8 +218,10 @@ async def start_application(settings: Settings) -> None:
         llm_client=llm_client,
         companion=companion,
         stt_service=stt_service,
+        vision_service=vision_service,
     )
 
+    await setup_bot_commands(bot, settings)
     queue.start()
     logger.info("Starting Telegram Bot long-polling...")
 

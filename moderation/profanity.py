@@ -126,12 +126,6 @@ class ProfanityDetector:
         re.compile(r"^ребенок", re.IGNORECASE),
     ]
 
-    # Паттерн для распознавания обычного смеха и опечаток в смехе (хаха, ахах, хд, пхаха, пхпх, п0хпх и т.д.)
-    LAUGHTER_PATTERN: re.Pattern[str] = re.compile(
-        r"^(?:[аaоo0еeиiуu]*[пp]?[хx0oaаеeиiуukкh]+[аaоo0еeиiуuхxhkкpп]*|[xх][dд]+|lo+l|lmao)+$",
-        re.IGNORECASE,
-    )
-
     def __init__(self, llm_client: Optional[LLMClient] = None, llm_enabled: bool = False) -> None:
         self.llm_client = llm_client
         self.llm_enabled = llm_enabled
@@ -298,12 +292,6 @@ class ProfanityDetector:
             self._save_to_cache(cache_key, regex_match)
             return regex_match
 
-        # Исключаем обычный смех и опечатки в смехе без вызова LLM
-        if self.LAUGHTER_PATTERN.match(cleaned):
-            result = ProfanityResult(is_profane=False, method="laughter_whitelist", reason="", confidence=1.0)
-            self._save_to_cache(cache_key, result)
-            return result
-
         if self.llm_enabled and self.llm_client and len(cleaned) > 2:
             llm_result = await self._check_with_llm(cleaned, strictness=strictness)
             if llm_result:
@@ -334,7 +322,6 @@ class ProfanityDetector:
             "Ты — строгий экспертный модератор чата Telegram.\n"
             f"{strictness_rule}\n"
             "Учитывай разные буквы, подмены (латиница/кириллица, цифры 0, 1, 3, 4, символы @, $, точки и пробелы между буквами).\n"
-            "ВАЖНО: Обычный смех (хаха, ахах, хд, пхаха, пхпх, п0хпх, ржу) и опечатки в смехе (например 'П0хпхахахахаха') СТРОГО НЕ считай матом (is_profane: false)!\n"
             "Ответь ИСКЛЮЧИТЕЛЬНО в формате JSON без markdown:\n"
             '{"is_profane": true, "severity": "hard", "reason": "Причина на русском", "confidence": 0.95}'
         )

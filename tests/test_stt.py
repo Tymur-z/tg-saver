@@ -46,6 +46,8 @@ def make_mock_message(
     msg.date = None
     msg.bot = MagicMock()
     msg.bot.send_chat_action = AsyncMock()
+    msg.bot.get_file = AsyncMock()
+    msg.bot.download_file = AsyncMock()
 
     if voice:
         v = MagicMock()
@@ -62,6 +64,8 @@ def make_mock_message(
         msg.video_note = vn
     else:
         msg.video_note = None
+
+    msg.audio = None
 
     return msg
 
@@ -294,4 +298,232 @@ async def test_reply_to_circle_conversational_enriches_extra_context(test_db: Da
 
     user_conv_msg.reply.assert_called_once()
     assert "Мне кажется, автор кружка абсолютно прав!" in user_conv_msg.reply.call_args[0][0]
+
+
+def test_is_transcription_request_variations() -> None:
+    from bot.handlers.forward import is_transcription_request
+
+    # Positive: direct transcription queries
+    assert is_transcription_request("Ричард что я сказал") is True
+    assert is_transcription_request("что я сказал") is True
+    assert is_transcription_request("что я наговорил") is True
+    assert is_transcription_request("Покажи что происходит тут на кружочке@RichardHelperBot") is True
+    assert is_transcription_request("Рокажи что происходит тут на кружочке") is True
+    assert is_transcription_request("что происходит в кружке") is True
+    assert is_transcription_request("что происходит на кружочке") is True
+    assert is_transcription_request("переведи кружок") is True
+    assert is_transcription_request("расшифруй голосовое") is True
+    assert is_transcription_request("что в последнем кружке") is True
+    assert is_transcription_request("Ричард, пожалуйста расскажи что в гс") is True
+    assert is_transcription_request("/transcribe") is True
+
+    # Negative: chat drama queries (without media words) & conversational opinions
+    assert is_transcription_request("Блять что с вами. Ричард что тут нах происходит") is False
+    assert is_transcription_request("Что здесь чёрт возьми происходит 😂👍") is False
+    assert is_transcription_request("Ричард что тут происходит") is False
+    assert is_transcription_request("Ричард, что думаешь по поводу кружка?") is False
+    assert is_transcription_request("Ричард прокомментируй кружок") is False
+    assert is_transcription_request("как дела Ричард?") is False
+
+
+@pytest.mark.asyncio
+async def test_non_reply_transcription_what_did_i_say(test_db: Database, test_stt_service: NvidiaSTTService) -> None:
+    """When a user sends a circle and then writes 'Ричард что я сказал' without reply, bot transcribes the user's circle!"""
+    settings = Settings(BOT_TOKEN="123:ABC", OWNER_ID=999, ANALYTICS_ENABLED=False)
+    mock_forward_engine = AsyncMock()
+    mock_profiler = AsyncMock()
+
+    chat_id = -100444
+    user_id = 911338473  # Timur
+    async with test_db.connect() as conn:
+        repo = ChatRepository(conn)
+        await repo.upsert_chat(chat_id=chat_id, title="Group Chat", chat_type="supergroup")
+        await conn.execute("UPDATE chats SET chat_ai_enabled = 1, stt_enabled = 1 WHERE chat_id = ?", (chat_id,))
+        await conn.commit()
+
+    # 1. Timur sends a circle note
+    circle_msg = make_mock_message(chat_id=chat_id, user_id=user_id, user_name="Тимур", video_note=True)
+    await handle_incoming_message(
+        message=circle_msg,
+        forward_engine=mock_forward_engine,
+        style_profiler=mock_profiler,
+        settings=settings,
+        db=test_db,
+        stt_service=test_stt_service,
+    )
+
+    # 2. Timur sends 'Ричард что я сказал' without swiping/replying
+    ask_msg = make_mock_message(chat_id=chat_id, user_id=user_id, user_name="Тимур", text="Ричард что я сказал", reply_to=None)
+    with patch.object(test_stt_service, "transcribe_telegram_file", return_value="Всем привет, я тестирую распознавание речи!"):
+        await handle_incoming_message(
+            message=ask_msg,
+            forward_engine=mock_forward_engine,
+            style_profiler=mock_profiler,
+            settings=settings,
+            db=test_db,
+            stt_service=test_stt_service,
+        )
+
+    ask_msg.reply.assert_called_once()
+    reply_text = ask_msg.reply.call_args[0][0]
+    assert "Расшифровка (Кружок от Тимур):" in reply_text
+    assert "Всем привет, я тестирую распознавание речи!" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_non_reply_transcription_show_what_happens_in_circle(test_db: Database, test_stt_service: NvidiaSTTService) -> None:
+    """When User A sends a circle, and User B writes 'Покажи что происходит тут на кружочке@RichardHelperBot' without reply, bot transcribes it!"""
+    settings = Settings(BOT_TOKEN="123:ABC", OWNER_ID=999, ANALYTICS_ENABLED=False)
+    mock_forward_engine = AsyncMock()
+    mock_profiler = AsyncMock()
+
+    chat_id = -100445
+    async with test_db.connect() as conn:
+        repo = ChatRepository(conn)
+        await repo.upsert_chat(chat_id=chat_id, title="Group Chat 2", chat_type="supergroup")
+        await conn.execute("UPDATE chats SET chat_ai_enabled = 1, stt_enabled = 1 WHERE chat_id = ?", (chat_id,))
+        await conn.commit()
+
+    # 1. Timur sends a video note
+    circle_msg = make_mock_message(chat_id=chat_id, user_id=911338473, user_name="Тимур", video_note=True)
+    await handle_incoming_message(
+        message=circle_msg,
+        forward_engine=mock_forward_engine,
+        style_profiler=mock_profiler,
+        settings=settings,
+        db=test_db,
+        stt_service=test_stt_service,
+    )
+
+    # 2. MixaRed asks 'Рокажи что происходит тут на кружочке@RichardHelperBot' without reply
+    mixa_msg = make_mock_message(chat_id=chat_id, user_id=5956803305, user_name="MixaRed", text="Рокажи что происходит тут на кружочке@RichardHelperBot", reply_to=None)
+    with patch.object(test_stt_service, "transcribe_telegram_file", return_value="На кружочке я показываю код на сервере"):
+        await handle_incoming_message(
+            message=mixa_msg,
+            forward_engine=mock_forward_engine,
+            style_profiler=mock_profiler,
+            settings=settings,
+            db=test_db,
+            stt_service=test_stt_service,
+        )
+
+    mixa_msg.reply.assert_called_once()
+    reply_text = mixa_msg.reply.call_args[0][0]
+    assert "Расшифровка (Кружок от Тимур):" in reply_text
+    assert "На кружочке я показываю код на сервере" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_non_reply_conversational_with_audio_enrichment(test_db: Database, test_stt_service: NvidiaSTTService) -> None:
+    """When a circle is sent and then someone asks 'Ричард что думаешь про кружок' without reply, extra_context receives the circle transcript!"""
+    from moderation.companion import ChatCompanion
+    from moderation.llm_client import LLMClient
+
+    settings = Settings(BOT_TOKEN="123:ABC", OWNER_ID=999, ANALYTICS_ENABLED=False)
+    mock_forward_engine = AsyncMock()
+    mock_profiler = AsyncMock()
+
+    mock_llm = AsyncMock(spec=LLMClient)
+    mock_llm.api_key = "test-key"
+    mock_llm.chat_completion.return_value = "По-моему, идея отличная."
+    companion = ChatCompanion(llm_client=mock_llm)
+    companion._bot_user = MagicMock(id=7761395820, username="RichardHelperBot")
+
+    chat_id = -100446
+    async with test_db.connect() as conn:
+        repo = ChatRepository(conn)
+        await repo.upsert_chat(chat_id=chat_id, title="Enrich Group", chat_type="supergroup")
+        await conn.execute("UPDATE chats SET chat_ai_enabled = 1, stt_enabled = 1 WHERE chat_id = ?", (chat_id,))
+        await conn.commit()
+
+    # 1. Sol sends a video note
+    sol_circle = make_mock_message(chat_id=chat_id, user_id=1696889505, user_name="Соль", video_note=True)
+    with patch.object(test_stt_service, "transcribe_telegram_file", return_value="Я гуляю по парку и ем мороженое"):
+        await handle_incoming_message(
+            message=sol_circle,
+            forward_engine=mock_forward_engine,
+            style_profiler=mock_profiler,
+            settings=settings,
+            db=test_db,
+            companion=companion,
+            stt_service=test_stt_service,
+        )
+
+    # 2. MixaRed writes 'Ричард что думаешь про кружок?' without reply
+    conv_msg = make_mock_message(chat_id=chat_id, user_id=5956803305, user_name="MixaRed", text="Ричард что думаешь про кружок?", reply_to=None)
+    await handle_incoming_message(
+        message=conv_msg,
+        forward_engine=mock_forward_engine,
+        style_profiler=mock_profiler,
+        settings=settings,
+        db=test_db,
+        companion=companion,
+        stt_service=test_stt_service,
+    )
+
+    mock_llm.chat_completion.assert_called_once()
+    call_messages = mock_llm.chat_completion.call_args[1]["messages"]
+    system_contents = [m["content"] for m in call_messages if m["role"] == "system"]
+    assert any("Контекст недавнего кружок от Соль" in c for c in system_contents)
+    assert any("Я гуляю по парку и ем мороженое" in c for c in system_contents)
+
+    conv_msg.reply.assert_called_once()
+    assert "По-моему, идея отличная." in conv_msg.reply.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_non_reply_conversational_with_silent_melody_enrichment(test_db: Database, test_stt_service: NvidiaSTTService) -> None:
+    """When a circle note has no clear speech (humming a tune), companion receives melody fallback context!"""
+    from moderation.companion import ChatCompanion
+    from moderation.llm_client import LLMClient
+
+    settings = Settings(BOT_TOKEN="123:ABC", OWNER_ID=999, ANALYTICS_ENABLED=False)
+    mock_forward_engine = AsyncMock()
+    mock_profiler = AsyncMock()
+
+    mock_llm = AsyncMock(spec=LLMClient)
+    mock_llm.api_key = "test-key"
+    mock_llm.chat_completion.return_value = "Вокал на уровне Грэмми."
+    companion = ChatCompanion(llm_client=mock_llm)
+    companion._bot_user = MagicMock(id=7761395820, username="RichardHelperBot")
+
+    chat_id = -100447
+    async with test_db.connect() as conn:
+        repo = ChatRepository(conn)
+        await repo.upsert_chat(chat_id=chat_id, title="Melody Group", chat_type="supergroup")
+        await conn.execute("UPDATE chats SET chat_ai_enabled = 1, stt_enabled = 1 WHERE chat_id = ?", (chat_id,))
+        await conn.commit()
+
+    # 1. Sol sends a video note with melody (STT returns None/empty)
+    sol_circle = make_mock_message(chat_id=chat_id, user_id=1696889505, user_name="Соль", video_note=True)
+    with patch.object(test_stt_service, "transcribe_telegram_file", return_value=None):
+        await handle_incoming_message(
+            message=sol_circle,
+            forward_engine=mock_forward_engine,
+            style_profiler=mock_profiler,
+            settings=settings,
+            db=test_db,
+            companion=companion,
+            stt_service=test_stt_service,
+        )
+
+    # 2. Someone asks 'Ричард как тебе пение в кружке?'
+    conv_msg = make_mock_message(chat_id=chat_id, user_id=5848551858, user_name="⠁⠃⠽⠎⠎", text="Ричард как тебе пение в кружке?", reply_to=None)
+    with patch.object(test_stt_service, "transcribe_telegram_file", return_value=None):
+        await handle_incoming_message(
+            message=conv_msg,
+            forward_engine=mock_forward_engine,
+            style_profiler=mock_profiler,
+            settings=settings,
+            db=test_db,
+            companion=companion,
+            stt_service=test_stt_service,
+        )
+
+    mock_llm.chat_completion.assert_called_once()
+    call_messages = mock_llm.chat_completion.call_args[1]["messages"]
+    system_contents = [m["content"] for m in call_messages if m["role"] == "system"]
+    assert any("была мелодия, напевание или музыка" in c for c in system_contents)
+
+
 

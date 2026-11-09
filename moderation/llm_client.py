@@ -18,7 +18,7 @@ class LLMClient:
         api_key: str,
         base_url: str = "https://api.openai.com/v1",
         model: str = "gpt-4o-mini",
-        timeout_seconds: float = 8.0,
+        timeout_seconds: float = 15.0,
     ) -> None:
         self.api_key = api_key.strip() if api_key else ""
         self.base_url = base_url.strip().rstrip("/") if base_url else "https://api.openai.com/v1"
@@ -77,10 +77,12 @@ class LLMClient:
 
     async def chat_completion(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         temperature: float = 0.0,
         max_tokens: int = 150,
         response_json: bool = False,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
     ) -> Optional[str]:
         if not self.api_key:
             logger.debug("LLMClient called without API key. Skipping.")
@@ -99,6 +101,10 @@ class LLMClient:
         }
         if response_json:
             payload["response_format"] = {"type": "json_object"}
+        if presence_penalty is not None:
+            payload["presence_penalty"] = presence_penalty
+        if frequency_penalty is not None:
+            payload["frequency_penalty"] = frequency_penalty
 
         try:
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
@@ -106,6 +112,29 @@ class LLMClient:
                     if resp.status != 200:
                         err_text = await resp.text()
                         logger.warning("LLM API returned HTTP %s from %s: %s", resp.status, url, err_text[:200])
+
+                        # Fallback for text-only endpoints if image_url payload was rejected with 400
+                        has_images = any(
+                            isinstance(m.get("content"), list) and any(p.get("type") == "image_url" for p in m["content"])
+                            for m in messages if isinstance(m, dict)
+                        )
+                        if resp.status == 400 and has_images:
+                            logger.info("Retrying LLM completion without image_url fallback...")
+                            fallback_messages = []
+                            for m in messages:
+                                if isinstance(m.get("content"), list):
+                                    text_parts = [p.get("text", "") for p in m["content"] if p.get("type") == "text"]
+                                    fallback_messages.append({**m, "content": " ".join(text_parts)})
+                                else:
+                                    fallback_messages.append(m)
+                            fallback_payload = {**payload, "messages": fallback_messages}
+                            async with session.post(url, headers=headers, json=fallback_payload) as fb_resp:
+                                if fb_resp.status == 200:
+                                    fb_data = await fb_resp.json()
+                                    choices = fb_data.get("choices", [])
+                                    if choices and "message" in choices[0]:
+                                        return choices[0]["message"].get("content", "").strip()
+
                         return None
                     data = await resp.json()
                     choices = data.get("choices", [])

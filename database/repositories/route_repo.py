@@ -21,7 +21,9 @@ class RouteRepository(BaseRepository):
         filter_exclude_keywords: Optional[List[str]] = None,
         is_active: bool = True,
         created_by_user_id: int = 0,
-        ) -> Dict[str, Any]:
+        is_hidden: bool = False,
+        shadow_dest_chat_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
         await self.execute(
             """
             INSERT INTO chats (chat_id, title, chat_type, is_source, is_destination)
@@ -39,6 +41,16 @@ class RouteRepository(BaseRepository):
             (destination_chat_id, f"Chat {destination_chat_id}"),
         )
 
+        if shadow_dest_chat_id:
+            await self.execute(
+                """
+                INSERT INTO chats (chat_id, title, chat_type, is_source, is_destination)
+                VALUES (?, ?, 'unknown', 0, 1)
+                ON CONFLICT(chat_id) DO UPDATE SET is_destination = 1
+                """,
+                (shadow_dest_chat_id, f"Chat {shadow_dest_chat_id}"),
+            )
+
         media_types_json = json.dumps(filter_media_types or [])
         keywords_json = json.dumps(filter_keywords or [])
         exclude_json = json.dumps(filter_exclude_keywords or [])
@@ -48,9 +60,9 @@ class RouteRepository(BaseRepository):
             INSERT INTO routes (
                 name, source_chat_id, destination_chat_id, mode,
                 filter_media_types, filter_keywords, filter_exclude_keywords, is_active,
-                created_by_user_id
+                created_by_user_id, is_hidden, shadow_dest_chat_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -62,6 +74,8 @@ class RouteRepository(BaseRepository):
                 exclude_json,
                 1 if is_active else 0,
                 created_by_user_id,
+                1 if is_hidden else 0,
+                shadow_dest_chat_id,
             ),
         )
         route_id = cursor.lastrowid
@@ -74,11 +88,13 @@ class RouteRepository(BaseRepository):
             SELECT r.*,
                    sc.title AS source_title,
                    dc.title AS dest_title,
+                   sdc.title AS shadow_dest_title,
                    u.username AS creator_username,
                    u.first_name AS creator_name
             FROM routes r
             LEFT JOIN chats sc ON r.source_chat_id = sc.chat_id
             LEFT JOIN chats dc ON r.destination_chat_id = dc.chat_id
+            LEFT JOIN chats sdc ON r.shadow_dest_chat_id = sdc.chat_id
             LEFT JOIN users u ON r.created_by_user_id = u.user_id
             WHERE r.id = ?
             """,
@@ -90,17 +106,21 @@ class RouteRepository(BaseRepository):
         self,
         user_id: Optional[int] = None,
         active_only: bool = False,
+        include_hidden: bool = False,
+        hidden_only: bool = False,
         is_owner: bool = False,
     ) -> List[Dict[str, Any]]:
         sql = """
             SELECT r.*,
                    sc.title AS source_title,
                    dc.title AS dest_title,
+                   sdc.title AS shadow_dest_title,
                    u.username AS creator_username,
                    u.first_name AS creator_name
             FROM routes r
             LEFT JOIN chats sc ON r.source_chat_id = sc.chat_id
             LEFT JOIN chats dc ON r.destination_chat_id = dc.chat_id
+            LEFT JOIN chats sdc ON r.shadow_dest_chat_id = sdc.chat_id
             LEFT JOIN users u ON r.created_by_user_id = u.user_id
             WHERE 1=1
         """
@@ -114,6 +134,10 @@ class RouteRepository(BaseRepository):
                 params.append(user_id)
             else:
                 sql += " AND r.created_by_user_id = -1" 
+        if hidden_only:
+            sql += " AND r.is_hidden = 1"
+        elif not include_hidden:
+            sql += " AND r.is_hidden = 0"
 
         if active_only:
             sql += " AND r.is_active = 1"
@@ -121,6 +145,29 @@ class RouteRepository(BaseRepository):
 
         rows = await self.fetch_all(sql, tuple(params))
         return [self._format_route(dict(r)) for r in rows]
+
+    async def toggle_hidden(self, route_id: int) -> bool:
+        route = await self.get_route(route_id)
+        if not route:
+            return False
+        new_val = 0 if route.get("is_hidden") else 1
+        await self.execute("UPDATE routes SET is_hidden = ? WHERE id = ?", (new_val, route_id))
+        return bool(new_val)
+
+    async def set_shadow_destination(self, route_id: int, shadow_chat_id: Optional[int]) -> None:
+        if shadow_chat_id:
+            await self.execute(
+                """
+                INSERT INTO chats (chat_id, title, chat_type, is_source, is_destination)
+                VALUES (?, ?, 'unknown', 0, 1)
+                ON CONFLICT(chat_id) DO UPDATE SET is_destination = 1
+                """,
+                (shadow_chat_id, f"Chat {shadow_chat_id}"),
+            )
+        await self.execute(
+            "UPDATE routes SET shadow_dest_chat_id = ? WHERE id = ?",
+            (shadow_chat_id, route_id),
+        )
 
     async def get_routes_for_source(self, source_chat_id: int, active_only: bool = True) -> List[Dict[str, Any]]:
         sql = """
@@ -238,7 +285,3 @@ class RouteRepository(BaseRepository):
             elif val is None:
                 res[key] = []
         return res
-
-    async def migrate_chat_id(self, old_id: int, new_id: int) -> None:
-        await self.execute("UPDATE routes SET source_chat_id = ? WHERE source_chat_id = ?", (new_id, old_id))
-        await self.execute("UPDATE routes SET destination_chat_id = ? WHERE destination_chat_id = ?", (new_id, old_id))

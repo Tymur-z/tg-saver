@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
+import html
+import json
 import logging
+import re
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -25,11 +30,13 @@ from bot.keyboards.inline import (
     stt_transcribe_kb,
     admin_panel_kb,
     all_routes_kb,
+    hidden_routes_list_kb,
     chat_moderation_detail_kb,
     llm_base_urls_select_kb,
     llm_cancel_kb,
     llm_context_select_kb,
     llm_models_select_kb,
+    daily_memory_kb,
     llm_settings_kb,
     llm_temp_select_kb,
     llm_tokens_select_kb,
@@ -58,8 +65,13 @@ class AdminPasswordStates(StatesGroup):
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, is_admin: bool = False) -> None:
-    role_badge = "👑 <b>Администратор</b>" if is_admin else "👤 <b>Пользователь</b>"
+async def cmd_start(message: Message, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if is_subadmin:
+        role_badge = "🛡️ <b>Младший Администратор</b>"
+    elif is_admin:
+        role_badge = "👑 <b>Администратор</b>"
+    else:
+        role_badge = "👤 <b>Пользователь</b>"
     user_name = message.from_user.first_name if message.from_user else "пользователь"
     div = "━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -74,7 +86,7 @@ async def cmd_start(message: Message, is_admin: bool = False) -> None:
         f"{div}\n"
         "👇 <i>Используйте кнопки меню ниже для навигации:</i>"
     )
-    await message.answer(text, reply_markup=main_menu_kb(is_admin=is_admin), parse_mode="HTML")
+    await message.answer(text, reply_markup=main_menu_kb(is_admin=is_admin, is_subadmin=is_subadmin), parse_mode="HTML")
 
 
 @router.message(Command("help"))
@@ -101,6 +113,7 @@ async def cmd_help(message: Message, is_admin: bool = False) -> None:
             "• /users — управление пользователями и аккаунтами",
             "• /password — настройка и смена пароля доступа",
             "• /moderation — модерация матов и предупреждения нарушителей",
+            "• /hidden_routes — скрытые маршруты и теневые чаты",
             "• /llm — настройка ИИ (модель, API-ключ, URL/IP)",
             "• /all_routes — просмотр всех маршрутов всех пользователей",
             "• /all_chats — просмотр всех каналов и групп бота",
@@ -124,13 +137,28 @@ async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings
         user_repo = UserRepository(conn)
         route_repo = RouteRepository(conn)
         chat_repo = ChatRepository(conn)
+        config_repo = ConfigRepository(conn)
 
         users_cnt = len(await user_repo.list_users(limit=500))
         routes_cnt = len(await route_repo.list_routes())
+        hidden_routes_cnt = len(await route_repo.list_routes(hidden_only=True))
         chats_cnt = len(await chat_repo.list_all())
         pw_req = await user_repo.is_password_required(settings.PASSWORD_REQUIRED)
 
+        llm_conf = await config_repo.get_llm_config(
+            default_enabled=settings.LLM_ENABLED,
+            default_model=settings.LLM_MODEL,
+        )
+        stt_conf = await config_repo.get_stt_config(
+            default_enabled=settings.STT_ENABLED,
+        )
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_mem = await chat_repo.get_daily_memory(-1002255156347, today_str)
+
     pw_status = "🟢 Включен" if pw_req else "⚪ Отключен"
+    llm_status_str = "🟢 Включен" if llm_conf["llm_enabled"] else "⚪ Выключен"
+    stt_status_str = "🟢 Включено" if stt_conf["stt_enabled"] else "⚪ Выключено"
+    mem_status_str = "🟢 Зафиксирована" if today_mem else "⚪ Ожидает диалогов"
     div = "━━━━━━━━━━━━━━━━━━━━━━"
 
     if is_subadmin:
@@ -138,7 +166,9 @@ async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings
             f"🛡️ <b>Панель Младшего Администратора</b>\n{div}\n"
             f"• 👥 <b>Пользователей в системе:</b> <code>{users_cnt}</code>\n"
             f"• 🔀 <b>Доступных маршрутов:</b> <code>{routes_cnt}</code>\n"
-            f"• 📡 <b>Подключенных чатов:</b> <code>{chats_cnt}</code>\n{div}\n"
+            f"• 📡 <b>Подключенных чатов:</b> <code>{chats_cnt}</code>\n"
+            f"• 🤖 <b>ИИ Ричард:</b> {llm_status_str}\n"
+            f"• 🎙️ <b>Распознавание речи:</b> {stt_status_str}\n{div}\n"
             "👇 <i>Вам доступно управление чатами, модерацией, ИИ и аналитикой:</i>"
         )
     else:
@@ -147,7 +177,10 @@ async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings
             f"• 👥 <b>Пользователей в системе:</b> <code>{users_cnt}</code>\n"
             f"• 🔀 <b>Всего маршрутов:</b> <code>{routes_cnt}</code> <i>(все авторы)</i>\n"
             f"• 📡 <b>Подключенных чатов:</b> <code>{chats_cnt}</code>\n"
-            f"• 🔑 <b>Пароль доступа:</b> {pw_status}\n{div}\n"
+            f"• 🔑 <b>Пароль доступа:</b> {pw_status}\n"
+            f"• 🤖 <b>ИИ-собеседник (Ричард):</b> {llm_status_str} <code>({llm_conf['llm_model']})</code>\n"
+            f"• 🎙️ <b>Распознавание речи:</b> {stt_status_str}\n"
+            f"• 📜 <b>Дневная память:</b> {mem_status_str}\n{div}\n"
             "👇 <i>Выберите нужный раздел для управления:</i>"
         )
 
@@ -155,8 +188,11 @@ async def cmd_admin_panel(event: Message | CallbackQuery, db: Database, settings
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb, parse_mode="HTML")
     else:
-        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await event.answer()
+        try:
+            await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest:
+            pass
+        await event.answer("🔄 Панель обновлена")
 
 
 @router.message(Command("users"))
@@ -178,8 +214,11 @@ async def cmd_admin_users(event: Message | CallbackQuery, db: Database, is_admin
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb, parse_mode="HTML")
     else:
-        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await event.answer()
+        try:
+            await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest:
+            pass
+        await event.answer("🔄 Пользователи обновлены")
 
 
 @router.callback_query(F.data.startswith("user_view:"))
@@ -196,7 +235,7 @@ async def cb_user_view(callback: CallbackQuery, db: Database, settings: Settings
         routes = await route_repo.list_routes(user_id=target_id)
 
     if not target:
-        await callback.message.edit_text("❌ Пользователь не найден.", reply_markup=admin_panel_kb())
+        await callback.message.edit_text("❌ Пользователь не найден.", reply_markup=admin_panel_kb(is_subadmin=is_subadmin))
         return
 
     status_str = "🚫 <b>Заблокирован</b>" if target.get("is_blocked") else ("🟢 <b>Авторизован</b>" if target.get("is_authorized") else "🔒 <b>Не авторизован (гость)</b>")
@@ -303,18 +342,56 @@ async def cmd_admin_all_routes(event: Message | CallbackQuery, db: Database, is_
 
     async with db.connect() as conn:
         repo = RouteRepository(conn)
-        routes = await repo.list_routes()
+        routes = await repo.list_routes(include_hidden=not is_subadmin)
 
     text = f"🌐 <b>Все маршруты системы ({len(routes)}):</b>\n\n"
     if not routes:
         text += "В системе пока нет активных маршрутов."
 
-    kb = all_routes_kb(routes)
+    kb = all_routes_kb(routes, is_subadmin=is_subadmin)
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb, parse_mode="HTML")
     else:
-        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await event.answer()
+        try:
+            await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest:
+            pass
+        await event.answer("🔄 Список маршрутов обновлен")
+
+
+
+@router.message(Command("hidden_routes"))
+@router.callback_query(F.data == "admin_hidden_routes")
+async def cmd_admin_hidden_routes(event: Message | CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        if isinstance(event, CallbackQuery):
+            await event.answer("⛔ Доступ к скрытым маршрутам разрешён только старшему администратору.", show_alert=True)
+        return
+
+    async with db.connect() as conn:
+        repo = RouteRepository(conn)
+        routes = await repo.list_routes(hidden_only=True)
+
+    text = f"🕵️ <b>Скрытые маршруты (Stealth Routers) ({len(routes)}):</b>\n\n"
+    if not routes:
+        text += (
+            "Скрытых маршрутов пока нет.\n\n"
+            "<i>💡 Скрытые маршруты не видны обычным пользователям. "
+            "Вы можете создать новый скрытый маршрут по кнопке ниже "
+            "или переключить видимость любого существующего маршрута в его карточке.</i>"
+        )
+    else:
+        text += "Эти маршруты полностью скрыты от обычных пользователей:\nВыберите маршрут для управления:"
+
+    kb = hidden_routes_list_kb(routes)
+    if isinstance(event, Message):
+        await event.answer(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        try:
+            await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest:
+            pass
+        await event.answer("🔄 Статус обновлен")
 
 
 @router.message(Command("all_chats"))
@@ -344,10 +421,11 @@ async def cmd_admin_all_chats(event: Message | CallbackQuery, db: Database, is_a
             lines.append(f"• <b>{c['title']}</b>{user_part} [<code>{c['chat_id']}</code>, {c['chat_type']}]{roles_str}")
 
     text = "\n".join(lines)
+    kb = admin_panel_kb(is_subadmin=is_subadmin)
     if isinstance(event, Message):
-        await event.answer(text, reply_markup=admin_panel_kb(), parse_mode="HTML")
+        await event.answer(text, reply_markup=kb, parse_mode="HTML")
     else:
-        await event.message.edit_text(text, reply_markup=admin_panel_kb(), parse_mode="HTML")
+        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         await event.answer()
 
 
@@ -514,11 +592,33 @@ async def cb_admin_toggle_pause(
     await cmd_status(callback, db, queue, is_admin=is_admin, is_subadmin=is_subadmin)
 
 
+@router.message(Command("pause"))
+async def cmd_pause(message: Message, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await message.answer("⛔ Команда доступна только администраторам.")
+        return
+    async with db.connect() as conn:
+        repo = ProfileRepository(conn)
+        await repo.set_system_paused(True)
+    await message.answer("⏸️ <b>Обработка сообщений и пересылка временно приостановлены.</b>", parse_mode="HTML")
+
+
+@router.message(Command("resume"))
+async def cmd_resume(message: Message, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        await message.answer("⛔ Команда доступна только администраторам.")
+        return
+    async with db.connect() as conn:
+        repo = ProfileRepository(conn)
+        await repo.set_system_paused(False)
+    await message.answer("▶️ <b>Обработка сообщений возобновлена.</b>", parse_mode="HTML")
+
+
 @router.callback_query(F.data == "nav_main")
-async def cb_main_menu(callback: CallbackQuery, is_admin: bool = False) -> None:
+async def cb_main_menu(callback: CallbackQuery, is_admin: bool = False, is_subadmin: bool = False) -> None:
     await callback.message.edit_text(
         "Главная панель управления:",
-        reply_markup=main_menu_kb(is_admin=is_admin),
+        reply_markup=main_menu_kb(is_admin=is_admin, is_subadmin=is_subadmin),
     )
     await callback.answer()
 
@@ -667,7 +767,11 @@ async def cb_chat_moderation_view(callback: CallbackQuery, db: Database, is_admi
         "━━━━━━━━━━━━━━━━━━━━━━",
         "💡 <i>Используйте кнопки ниже для переключения опций:</i>",
     ]
-    await callback.message.edit_text("\n".join(lines), reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
+    try:
+        await callback.message.edit_text("\n".join(lines), reply_markup=chat_moderation_detail_kb(chat), parse_mode="HTML")
+    except TelegramBadRequest:
+        pass
+    await callback.answer("🔄 Данные чата обновлены")
 
 
 @router.callback_query(F.data.startswith("mod_toggle:"))
@@ -738,10 +842,14 @@ async def _render_llm_settings(conn, settings: Settings, is_subadmin: bool = Fal
     temp = conf.get("companion_temperature", 0.7)
     persona = conf.get("companion_persona", "student")
     persona_map = {
-        "student": "🎓 Студент-сокурсник",
+        "student": "🎓 Студент / Свой пацан",
         "expert": "💼 Деловой эксперт",
         "sarcastic": "😈 Дерзкий / Остроумный",
         "concise": "⚡ Краткий / По делу",
+        "gamer": "🎮 Геймер / CS2 & Катки",
+        "tech": "🧠 Технарь / Интеллектуал",
+        "chill": "☕ Чилл / Пофигист",
+        "toxic": "🐺 Токсик / Прожарка",
         "custom": "✍️ Свой системный промпт",
     }
     persona_str = persona_map.get(persona, "🎓 Студент-сокурсник")
@@ -775,6 +883,10 @@ async def _render_llm_settings(conn, settings: Settings, is_subadmin: bool = Fal
             div,
         ]
 
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_mem = await ChatRepository(conn).get_daily_memory(-1002255156347, today_str)
+    mem_status = "🟢 Зафиксирована" if today_mem else "⚪ Ожидает диалогов"
+
     lines = top_lines + [
         "⚙️ <b>Параметры генерации и памяти:</b>",
         f"• 📚 <b>Контекст чата:</b> <code>{ctx}</code> недавних сообщ.",
@@ -784,6 +896,7 @@ async def _render_llm_settings(conn, settings: Settings, is_subadmin: bool = Fal
         f"• 🎯 <b>Триггер в группе:</b> {trigger_str}",
         f"• ⌨️ <b>Статус «Печатает...»:</b> {typing_str}",
         f"• 🎲 <b>Случайные реплики:</b> {rand_str}",
+        f"• 📜 <b>Дневная память:</b> {mem_status}",
         div,
         "💡 <i>Поддерживаются OpenAI, Google Gemini, DeepSeek и локальные LLM (vLLM / Ollama).</i>",
     ]
@@ -813,8 +926,11 @@ async def cmd_admin_llm_settings(
 
     kb = llm_settings_kb(is_on, conf, is_subadmin=is_subadmin)
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await event.answer()
+        try:
+            await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest:
+            pass
+        await event.answer("🔄 Настройки речи обновлены")
     else:
         await event.answer(text, reply_markup=kb, parse_mode="HTML")
 
@@ -1070,10 +1186,16 @@ async def cb_llm_test_ping(
         await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
         return
 
-    await callback.answer("⏳ Тестирование соединения с ИИ...", show_alert=False)
-    success, msg, latency_ms = await llm_client.test_connection()
+    await callback.answer("⏳ Проверка связи с ИИ...", show_alert=False)
+    try:
+        success, msg, latency_ms = await asyncio.wait_for(llm_client.test_connection(), timeout=12.0)
+    except asyncio.TimeoutError:
+        success, msg, latency_ms = False, "Таймаут соединения (12 сек)", 12000.0
+    except Exception as ex:
+        success, msg, latency_ms = False, str(ex), 0.0
 
     if success:
+        popup_msg = f"✅ Связь с ИИ активна! ({latency_ms:.0f} мс)"
         result_text = (
             f"✅ <b>Тест подключения успешен!</b>\n\n"
             f"• <b>Модель:</b> <code>{llm_client.model}</code>\n"
@@ -1081,6 +1203,7 @@ async def cb_llm_test_ping(
             f"• <b>Ответ API:</b> <i>{msg}</i>"
         )
     else:
+        popup_msg = f"❌ Ошибка соединения: {msg[:60]}"
         result_text = (
             f"❌ <b>Ошибка при проверке связи!</b>\n\n"
             f"• <b>Эндпоинт:</b> <code>{llm_client.base_url}</code>\n"
@@ -1089,6 +1212,10 @@ async def cb_llm_test_ping(
         )
 
     await callback.message.answer(result_text, parse_mode="HTML")
+    try:
+        await callback.answer(popup_msg, show_alert=True)
+    except Exception:
+        pass
 
 # ==================== STRICTNESS & CUSTOM WORDS ====================
 
@@ -1584,20 +1711,46 @@ async def cb_mod_wl_clear(callback: CallbackQuery, db: Database, is_admin: bool 
 
 
 @router.callback_query(F.data == "llm_select_persona")
-async def cb_llm_select_persona(callback: CallbackQuery, is_admin: bool = False) -> None:
+async def cb_llm_select_persona(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
     if not is_admin:
         await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
         return
+    async with db.connect() as conn:
+        config_repo = ConfigRepository(conn)
+        conf = await config_repo.get_llm_config()
+    current_persona = conf.get("companion_persona", "student")
+
+    persona_map = {
+        "student": "🎓 Студент / Свой пацан",
+        "expert": "💼 Деловой эксперт",
+        "sarcastic": "😈 Дерзкий / Остроумный",
+        "concise": "⚡ Краткий / По делу",
+        "gamer": "🎮 Геймер / CS2 & Катки",
+        "tech": "🧠 Технарь / Интеллектуал",
+        "chill": "☕ Чилл / Пофигист",
+        "toxic": "🐺 Токсик / Прожарка",
+        "custom": "✍️ Свой системный промпт",
+    }
+    current_label = persona_map.get(current_persona, current_persona)
+
     text = (
         "🎭 <b>Выбор характера и личности Ричарда:</b>\n\n"
-        "• 🎓 <b>Студент-сокурсник</b> — живой, понимает пары, сессии, дружелюбный и отзывчивый\n"
-        "• 💼 <b>Деловой эксперт</b> — вежливый, точный, без лишнего сленга и шуток\n"
-        "• 😈 <b>Дерзкий / Остроумный</b> — черный юмор, сарказм и подколы\n"
-        "• ⚡ <b>Краткий / По делу</b> — 1-2 предложения, максимум сути\n"
-        "• ✍️ <b>Свой промпт</b> — задайте любую свою инструкцию для нейросети\n\n"
-        "Выберите пресет:"
+        "• 🎓 <b>Студент / Свой пацан</b> — живой участник чата, остроумный, на равных, шарит за мемы, учебу и движ\n"
+        "• 💼 <b>Деловой эксперт</b> — вежливый, структурный, без уличного сленга, аргументы по фактам\n"
+        "• 😈 <b>Дерзкий / Остроумный</b> — тонкая ирония, хлёсткий сарказм, черноватый юмор и подколы\n"
+        "• ⚡ <b>Краткий / По делу</b> — строго 1-2 предложения, максимум сути без лишней воды\n"
+        "• 🎮 <b>Геймер / CS2 & Катки</b> — CS2, Faceit (эло, тильт, клатчи), SnowRunner, Steam и гейминг\n"
+        "• 🧠 <b>Технарь / Интеллектуал</b> — химия (газы/кислоты), физика, код (Python/Linux), серверы и логика\n"
+        "• ☕ <b>Чилл / Пофигист</b> — невозмутимый дзен, гасит конфликты спокойствием, легкий вайб\n"
+        "• 🐺 <b>Токсик / Прожарка</b> — режим жесткого роаста троллей, бьет по косякам с максимальным сарказмом\n"
+        "• ✍️ <b>Свой системный промпт</b> — задайте любую свою инструкцию для нейросети\n\n"
+        f"Текущий режим: <b>{current_label}</b>\n"
+        "Выберите характер:"
     )
-    await callback.message.edit_text(text, reply_markup=llm_persona_select_kb(), parse_mode="HTML")
+    try:
+        await callback.message.edit_text(text, reply_markup=llm_persona_select_kb(current_persona=current_persona), parse_mode="HTML")
+    except TelegramBadRequest:
+        pass
     await callback.answer()
 
 
@@ -1613,14 +1766,34 @@ async def cb_llm_set_persona(
         await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
         return
     persona_code = callback.data.split(":", 1)[1]
+    from moderation.companion import PERSONA_PRESETS
+    if persona_code not in PERSONA_PRESETS and persona_code != "custom":
+        await callback.answer("⚠️ Неизвестный характер.", show_alert=True)
+        return
     async with db.connect() as conn:
         config_repo = ConfigRepository(conn)
         await config_repo.set_llm_config(persona=persona_code)
         text, is_on, conf = await _render_llm_settings(conn, settings)
     if companion:
         companion.update_config(persona=persona_code)
-    await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
-    await callback.answer(f"Характер: {persona_code}")
+
+    persona_map = {
+        "student": "🎓 Студент / Свой пацан",
+        "expert": "💼 Деловой эксперт",
+        "sarcastic": "😈 Дерзкий / Остроумный",
+        "concise": "⚡ Краткий / По делу",
+        "gamer": "🎮 Геймер / CS2 & Катки",
+        "tech": "🧠 Технарь / Интеллектуал",
+        "chill": "☕ Чилл / Пофигист",
+        "toxic": "🐺 Токсик / Прожарка",
+        "custom": "✍️ Свой системный промпт",
+    }
+    p_label = persona_map.get(persona_code, persona_code)
+    try:
+        await callback.message.edit_text(text, reply_markup=llm_settings_kb(is_on, conf), parse_mode="HTML")
+    except TelegramBadRequest:
+        pass
+    await callback.answer(f"✅ Характер: {p_label}")
 
 
 @router.callback_query(F.data == "llm_custom_persona")
@@ -1760,9 +1933,10 @@ async def cb_llm_clear_all_mem(
         return
     async with db.connect() as conn:
         await ChatRepository(conn).clear_all_companion_history()
+        await conn.execute("DELETE FROM chat_daily_memories")
     if companion:
         companion.context_buffer._buffers.clear()
-    await callback.answer("Вся память диалогов Ричарда во всех чатах очищена!", show_alert=True)
+    await callback.answer("Вся память диалогов и дневная хроника Ричарда во всех чатах очищена!", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("mod_view_history:"))
@@ -2023,6 +2197,7 @@ async def cb_mod_clear_user_ctx(
     await callback.answer("Контекст участника успешно очищен!", show_alert=True)
     await cb_mod_users_ctx(callback, db, is_admin=is_admin)
 
+
 # ─── NVIDIA STT (SPEECH-TO-TEXT) SETTINGS ───────────────────────────────────
 
 async def _render_stt_settings(conn, settings: Settings, is_subadmin: bool = False) -> tuple[str, dict]:
@@ -2237,18 +2412,174 @@ async def cb_stt_test(
             wf.writeframes(struct.pack(f"<{len(samples)}h", *samples))
         test_wav = buf.getvalue()
 
-        loop = asyncio.get_running_loop()
-        res = await asyncio.to_thread(stt_service._sync_recognize, test_wav, "ru-RU")
+        res = await asyncio.wait_for(asyncio.to_thread(stt_service._sync_recognize, test_wav, "ru-RU"), timeout=15.0)
         await callback.message.answer(
             "✅ <b>Тест NVIDIA Riva Whisper успешно пройден!</b>\n\n"
             f"• Статус соединения: <b>OK</b>\n"
             f"• Модель: <code>whisper-large-v3</code>\n"
+            f"• Сервер: <code>grpc.nvcf.nvidia.com:443</code>\n"
             f"• Результат теста: <i>соединение активно</i>",
             parse_mode="HTML",
         )
+        try:
+            await callback.answer("✅ NVIDIA Riva Whisper: соединение активно!", show_alert=True)
+        except Exception:
+            pass
+    except asyncio.TimeoutError:
+        err_msg = "Таймаут соединения с NVIDIA Riva (15 сек)"
+        await callback.message.answer(f"⚠️ <b>Ошибка:</b> {err_msg}", parse_mode="HTML")
+        try:
+            await callback.answer(f"❌ {err_msg}", show_alert=True)
+        except Exception:
+            pass
     except Exception as e:
         logger.warning("STT Test failed: %s", e)
         await callback.message.answer(
             f"⚠️ <b>Ошибка при тестировании NVIDIA Whisper:</b>\n<code>{html.escape(str(e))}</code>",
             parse_mode="HTML",
         )
+        try:
+            await callback.answer(f"❌ Ошибка: {str(e)[:50]}", show_alert=True)
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data == "admin_daily_memory")
+async def cb_admin_daily_memory(
+    callback: CallbackQuery,
+    db: Database,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    target_cid = -1002255156347
+    div = "━━━━━━━━━━━━━━━━━━━━━━"
+
+    async with db.connect() as conn:
+        repo = ChatRepository(conn)
+        mem = await repo.get_daily_memory(target_cid, today_str)
+        chat_row = await conn.execute("SELECT title FROM chats WHERE chat_id = ?", (target_cid,))
+        c_data = await chat_row.fetchone()
+        c_title = c_data["title"] if c_data else "TiraMMMiSu"
+
+    if not mem or not (mem.get("summary") or mem.get("key_facts")):
+        text = (
+            f"📜 <b>Управление дневной памятью и сводками</b>\n{div}\n"
+            f"• 📅 <b>Дата:</b> <code>{today_str}</code>\n"
+            f"• 📡 <b>Основной чат:</b> <b>{html.escape(c_title)}</b> (<code>{target_cid}</code>)\n"
+            f"• 🧠 <b>Статус:</b> ⚪ <i>Сводка на сегодня ещё не сформирована</i>\n{div}\n"
+            "💡 <i>Нажмите кнопку ниже, чтобы ИИ проанализировал последние сообщения чата и составил свежую сводку дня.</i>"
+        )
+        has_mem = False
+    else:
+        facts_list = mem.get("key_facts") or []
+        facts_text = "\n".join(f"  • {html.escape(f)}" for f in facts_list[:6]) if facts_list else "  <i>(нет ключевых фактов)</i>"
+        text = (
+            f"📜 <b>Управление дневной памятью и сводками</b>\n{div}\n"
+            f"• 📅 <b>Дата:</b> <code>{today_str}</code>\n"
+            f"• 📡 <b>Основной чат:</b> <b>{html.escape(c_title)}</b> (<code>{target_cid}</code>)\n"
+            f"• 🧠 <b>Статус:</b> 🟢 <b>Сводка зафиксирована</b>\n{div}\n"
+            f"📝 <b>Хроника событий за сегодня:</b>\n{html.escape(mem.get('summary', ''))}\n\n"
+            f"📌 <b>Ключевые факты и рофлы дня:</b>\n{facts_text}\n{div}\n"
+            "💡 <i>Эта хроника используется Ричардом для контекстных ответов, осаживания оппонентов и выдачи сводки админу.</i>"
+        )
+        has_mem = True
+
+    await callback.message.edit_text(text, reply_markup=daily_memory_kb(has_memory=has_mem), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "daily_mem_regenerate")
+async def cb_daily_mem_regenerate(
+    callback: CallbackQuery,
+    db: Database,
+    companion: Optional[ChatCompanion] = None,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    await callback.answer("⏳ Анализирую диалоги и формирую сводку дня...", show_alert=False)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    target_cid = -1002255156347
+
+    messages_list = []
+    async with db.connect() as conn:
+        cursor = await conn.execute(
+            "SELECT user_name, text, created_at, is_bot FROM companion_chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT 40",
+            (target_cid,)
+        )
+        rows = await cursor.fetchall()
+        for r in reversed(rows):
+            sender = "Ричард (Бот)" if r["is_bot"] else (r["user_name"] or "Участник")
+            messages_list.append(f"[{sender}]: {r['text']}")
+
+    if not messages_list:
+        await callback.answer("⚠️ В базе данных пока нет сообщений для этого чата.", show_alert=True)
+        return
+
+    if not companion or not companion.llm_client:
+        await callback.answer("⚠️ ИИ-клиент не подключен.", show_alert=True)
+        return
+
+    raw_logs = "\n".join(messages_list)
+    prompt = (
+        "Составь структурированную дневную память чата для ИИ-собеседника на русском языке в формате JSON.\n"
+        "КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать еду, десерты или вымышленные факты! Говори строго по логам.\n"
+        "Формат ответа:\n"
+        "{\n"
+        '  "summary": "Краткое изложение главных событий дня (2-3 предложения)",\n'
+        '  "key_facts": ["факт 1", "факт 2", "факт 3"]\n'
+        "}\n\n"
+        f"Лог сообщений чата:\n{raw_logs}"
+    )
+    try:
+        raw_res = await companion.llm_client.chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+            max_tokens=600,
+        )
+        clean_json = raw_res.strip()
+        if clean_json.startswith("```"):
+            clean_json = re.sub(r"^```(?:json)?\n?", "", clean_json)
+            clean_json = re.sub(r"\n?```$", "", clean_json)
+        parsed = json.loads(clean_json)
+        sum_text = parsed.get("summary", "")
+        facts = parsed.get("key_facts", [])
+
+        async with db.connect() as conn:
+            await ChatRepository(conn).upsert_daily_memory(
+                chat_id=target_cid,
+                date_str=today_str,
+                summary=sum_text,
+                key_facts=facts,
+            )
+        await callback.answer("✅ Сводка дня успешно пересобрана нейросетью!", show_alert=True)
+    except Exception as ex:
+        logger.exception("Error regenerating daily memory: %s", ex)
+        await callback.answer(f"❌ Ошибка генерации: {ex}", show_alert=True)
+
+    await cb_admin_daily_memory(callback, db=db, is_admin=is_admin)
+
+
+@router.callback_query(F.data == "daily_mem_clear")
+async def cb_daily_mem_clear(
+    callback: CallbackQuery,
+    db: Database,
+    is_admin: bool = False,
+) -> None:
+    if not is_admin:
+        await callback.answer("⚠️ Доступ только для администраторов.", show_alert=True)
+        return
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    target_cid = -1002255156347
+    async with db.connect() as conn:
+        await conn.execute("DELETE FROM chat_daily_memories WHERE chat_id = ? AND date_str = ?", (target_cid, today_str))
+
+    await callback.answer("🗑️ Дневная память за сегодня очищена!", show_alert=True)
+    await cb_admin_daily_memory(callback, db=db, is_admin=is_admin)

@@ -68,7 +68,11 @@ def admin_panel_kb(is_subadmin: bool = False) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="📡 Все чаты бота", callback_data="admin_all_chats"),
+                InlineKeyboardButton(text="🕵️ Скрытые маршруты", callback_data="admin_hidden_routes"),
+            ],
+            [
                 InlineKeyboardButton(text="🛡️ Модерация и чаты", callback_data="admin_moderation_chats"),
+                InlineKeyboardButton(text="📜 Память и сводки", callback_data="admin_daily_memory"),
             ],
             [
                 InlineKeyboardButton(text="🤖 Настройки ИИ (LLM)", callback_data="admin_llm_settings"),
@@ -125,8 +129,10 @@ def user_card_kb(
     buttons: List[List[InlineKeyboardButton]] = []
 
     # Owner or self cannot be blocked or reset
-    if is_owner or is_self or role == "owner":
+    if is_owner or role == "owner":
         buttons.append([InlineKeyboardButton(text="👑 Главный владелец (Защищён)", callback_data="noop")])
+    elif is_self:
+        buttons.append([InlineKeyboardButton(text="👤 Ваш аккаунт (Защищён)", callback_data="noop")])
     elif is_subadmin:
         # Subadmin cannot block admins or change roles
         if role in ("admin", "subadmin"):
@@ -183,13 +189,14 @@ def password_management_kb(password_required: bool) -> InlineKeyboardMarkup:
     )
 
 
-def all_routes_kb(routes: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+def all_routes_kb(routes: List[Dict[str, Any]], is_subadmin: bool = False) -> InlineKeyboardMarkup:
     buttons: List[List[InlineKeyboardButton]] = []
     for r in routes:
         status_icon = "🟢" if r.get("is_active") else "⏸️"
         mode_icon = "↗️" if r.get("mode") == "forward" else "📋"
+        hidden_icon = (" 🕵️" if r.get("is_hidden") else "") if not is_subadmin else ""
         creator = r.get("creator_username") or r.get("creator_name") or f"ID {r.get('created_by_user_id', 0)}"
-        title = f"{status_icon} {mode_icon} #{r['id']} {r['name'][:16]} [{creator[:10]}]"
+        title = f"{status_icon} {mode_icon}{hidden_icon} #{r['id']} {r['name'][:14]} [{creator[:8]}]"
         buttons.append([InlineKeyboardButton(text=title, callback_data=f"route_view:{r['id']}")])
 
     buttons.append([
@@ -205,7 +212,8 @@ def routes_list_kb(routes: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
     for r in routes:
         status_icon = "🟢" if r.get("is_active") else "⏸️"
         mode_icon = "↗️" if r.get("mode") == "forward" else "📋"
-        title = f"{status_icon} {mode_icon} #{r['id']} {r['name'][:22]}"
+        stealth_badge = "🕵️ " if r.get("is_hidden") else ""
+        title = f"{stealth_badge}{status_icon} {mode_icon} #{r['id']} {r['name'][:20]}"
         buttons.append([InlineKeyboardButton(text=title, callback_data=f"route_view:{r['id']}")])
 
     buttons.append([
@@ -216,7 +224,7 @@ def routes_list_kb(routes: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def route_detail_kb(route: Dict[str, Any], is_admin: bool = False) -> InlineKeyboardMarkup:
+def route_detail_kb(route: Dict[str, Any], is_admin: bool = False, is_subadmin: bool = False) -> InlineKeyboardMarkup:
     route_id = route["id"]
     is_active = bool(route.get("is_active"))
     mode = route.get("mode", "forward")
@@ -243,6 +251,23 @@ def route_detail_kb(route: Dict[str, Any], is_admin: bool = False) -> InlineKeyb
             InlineKeyboardButton(text="🚫 Стоп-слова", callback_data=f"route_ex_menu:{route_id}"),
         ],
     ]
+
+    if is_admin and not is_subadmin:
+        is_hidden = bool(route.get("is_hidden"))
+        hidden_icon = "🟢 ВКЛ" if is_hidden else "⚪ ВЫКЛ"
+        shadow_id = route.get("shadow_dest_chat_id")
+        shadow_badge = f"{shadow_id}" if shadow_id else "Задать"
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🕵️ Скрытый: {hidden_icon}",
+                callback_data=f"route_toggle_hidden:{route_id}",
+            ),
+            InlineKeyboardButton(
+                text=f"🕵️ Теневой чат: {shadow_badge}",
+                callback_data=f"route_shadow_menu:{route_id}",
+            ),
+        ])
 
     if mode == "copy":
         clean_links_icon = "🟢" if route.get("clean_links") else "⚪"
@@ -274,7 +299,7 @@ def route_detail_kb(route: Dict[str, Any], is_admin: bool = False) -> InlineKeyb
     buttons.append([
         InlineKeyboardButton(text="🗑️ Удалить маршрут", callback_data=f"route_delete:{route_id}"),
     ])
-    back_target = "nav_routes"
+    back_target = "admin_hidden_routes" if route.get("is_hidden") and is_admin else "nav_routes"
     buttons.append([
         InlineKeyboardButton(text="⬅️ Назад к маршрутам", callback_data=back_target),
     ])
@@ -479,6 +504,10 @@ def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None, is_
         "expert": "💼 Эксперт",
         "sarcastic": "😈 Дерзкий",
         "concise": "⚡ Краткий",
+        "gamer": "🎮 Геймер",
+        "tech": "🧠 Технарь",
+        "chill": "☕ Чилл",
+        "toxic": "🐺 Токсик",
         "custom": "✍️ Свой",
     }
     p_text = p_labels.get(persona, "🎓 Студент")
@@ -532,7 +561,10 @@ def llm_settings_kb(is_enabled: bool, conf: Optional[Dict[str, Any]] = None, is_
                 InlineKeyboardButton(text="🧹 Очистить всю память", callback_data="llm_clear_all_mem"),
             ],
             [
+                InlineKeyboardButton(text="📜 Дневная память / Сводка", callback_data="admin_daily_memory"),
                 InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_llm_settings"),
+            ],
+            [
                 InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin"),
             ],
         ]
@@ -600,6 +632,36 @@ def my_style_kb(is_admin: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+
+def hidden_routes_list_kb(routes: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = []
+    for r in routes:
+        status_icon = "🟢" if r.get("is_active") else "⏸️"
+        mode_icon = "↗️" if r.get("mode") == "forward" else "📋"
+        shadow_part = f" 🕵️->{r['shadow_dest_chat_id']}" if r.get("shadow_dest_chat_id") else ""
+        title = f"{status_icon} {mode_icon} #{r['id']} {r['name'][:18]}{shadow_part}"
+        buttons.append([InlineKeyboardButton(text=title, callback_data=f"route_view:{r['id']}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="➕ Создать скрытый маршрут", callback_data="route_create_hidden"),
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_hidden_routes"),
+    ])
+    buttons.append([InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def shadow_dest_kb(route_id: int, current_shadow_id: Optional[int] = None) -> InlineKeyboardMarkup:
+    buttons: List[List[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="✏️ Задать / Изменить ID чата", callback_data=f"shadow_set:{route_id}")],
+    ]
+    if current_shadow_id:
+        buttons.append([
+            InlineKeyboardButton(text="🗑️ Удалить теневой чат (отключить)", callback_data=f"shadow_clear:{route_id}")
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад к маршруту", callback_data=f"route_view:{route_id}")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def mod_strictness_select_kb(cid: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -685,17 +747,29 @@ def mod_whitelist_kb(cid: int, has_words: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def llm_persona_select_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🎓 Студент-сокурсник (по умолч.)", callback_data="llm_set_persona:student")],
-            [InlineKeyboardButton(text="💼 Деловой эксперт", callback_data="llm_set_persona:expert")],
-            [InlineKeyboardButton(text="😈 Дерзкий / Остроумный", callback_data="llm_set_persona:sarcastic")],
-            [InlineKeyboardButton(text="⚡ Краткий / По делу", callback_data="llm_set_persona:concise")],
-            [InlineKeyboardButton(text="✍️ Задать свой системный промпт", callback_data="llm_custom_persona")],
-            [InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")],
-        ]
-    )
+def llm_persona_select_kb(current_persona: str = "student") -> InlineKeyboardMarkup:
+    presets = [
+        ("student", "🎓 Студент"),
+        ("expert", "💼 Деловой"),
+        ("sarcastic", "😈 Дерзкий"),
+        ("concise", "⚡ Краткий"),
+        ("gamer", "🎮 Геймер"),
+        ("tech", "🧠 Технарь"),
+        ("chill", "☕ Чилл"),
+        ("toxic", "🐺 Токсик"),
+    ]
+    rows: List[List[InlineKeyboardButton]] = []
+    for i in range(0, len(presets), 2):
+        row = []
+        for code, label in presets[i : i + 2]:
+            mark = "✅ " if current_persona == code else ""
+            row.append(InlineKeyboardButton(text=f"{mark}{label}", callback_data=f"llm_set_persona:{code}"))
+        rows.append(row)
+
+    custom_mark = "✅ " if current_persona == "custom" else ""
+    rows.append([InlineKeyboardButton(text=f"{custom_mark}✍️ Задать свой системный промпт", callback_data="llm_custom_persona")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад в меню ИИ", callback_data="admin_llm_settings")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def llm_trigger_select_kb() -> InlineKeyboardMarkup:
@@ -804,7 +878,6 @@ def stt_transcribe_kb(file_unique_id: str) -> InlineKeyboardMarkup:
     )
 
 
-
 def status_menu_kb(is_paused: bool, is_subadmin: bool = False) -> InlineKeyboardMarkup:
     """Dedicated keyboard for system status and pause control."""
     pause_btn_text = "▶️ Возобновить работу" if is_paused else "⏸️ Поставить на паузу"
@@ -817,4 +890,20 @@ def status_menu_kb(is_paused: bool, is_subadmin: bool = False) -> InlineKeyboard
             InlineKeyboardButton(text="⬅️ В админ-панель", callback_data="nav_admin"),
         ],
     ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def daily_memory_kb(has_memory: bool = True) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(text="🔄 Пересобрать сводку дня", callback_data="daily_mem_regenerate"),
+        ],
+    ]
+    if has_memory:
+        buttons.append([
+            InlineKeyboardButton(text="🗑️ Очистить память дня", callback_data="daily_mem_clear"),
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад в настройки ИИ", callback_data="admin_llm_settings"),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

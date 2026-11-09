@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     STT_URI: str = "grpc.nvcf.nvidia.com:443"
     STT_LANGUAGE: str = "ru-RU"
 
+    VISION_ENABLED: bool = True
+    VISION_MAX_DIMENSION: int = 1024
+    VISION_DETAIL: str = "auto"
+
     @field_validator("ADMIN_IDS", mode="before")
     @classmethod
     def normalize_admin_ids(cls, v: object) -> str:

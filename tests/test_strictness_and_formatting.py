@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import pytest
 from moderation.profanity import ProfanityDetector
 from moderation.companion import format_companion_html

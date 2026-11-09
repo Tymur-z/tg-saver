@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS routes (
     clean_tags BOOLEAN NOT NULL DEFAULT 0,
     clean_mentions BOOLEAN NOT NULL DEFAULT 0,
     append_source_link BOOLEAN NOT NULL DEFAULT 0,
+    is_hidden BOOLEAN NOT NULL DEFAULT 0,
+    shadow_dest_chat_id INTEGER DEFAULT NULL,
     is_active BOOLEAN NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (source_chat_id) REFERENCES chats(chat_id) ON DELETE CASCADE,
@@ -118,6 +120,31 @@ CREATE TABLE IF NOT EXISTS moderation_violations (
 );
 CREATE INDEX IF NOT EXISTS idx_mod_violations_user ON moderation_violations(chat_id, user_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS chat_daily_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    date_str TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    key_facts TEXT NOT NULL DEFAULT '[]',
+    last_msg_id INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(chat_id, date_str)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_memories_date ON chat_daily_memories(chat_id, date_str);
+
+CREATE TABLE IF NOT EXISTS chat_recent_photos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    user_name TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    file_unique_id TEXT NOT NULL,
+    caption TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chat_recent_photos ON chat_recent_photos(chat_id, id DESC);
+
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     username TEXT,
@@ -143,6 +170,8 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         ("clean_mentions", "BOOLEAN", "0"),
         ("append_source_link", "BOOLEAN", "0"),
         ("created_by_user_id", "INTEGER", "0"),
+        ("is_hidden", "BOOLEAN", "0"),
+        ("shadow_dest_chat_id", "INTEGER", "NULL"),
     ]:
         try:
             if default == "NULL":

@@ -4,17 +4,18 @@ import logging
 from typing import Any, Dict, List
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from config.settings import Settings
 from database.connection import Database
 from database.repositories.chat_repo import ChatRepository
 from database.repositories.route_repo import RouteRepository
 from forwarder.cycle_detector import RouteCycleDetector
 from bot.keyboards.inline import (
+    shadow_dest_kb,
     MEDIA_TYPE_LABELS,
     keywords_menu_kb,
     main_menu_kb,
@@ -27,6 +28,10 @@ from bot.keyboards.inline import (
 
 logger = logging.getLogger(__name__)
 router = Router(name="routes_router")
+
+
+class ShadowDestStates(StatesGroup):
+    waiting_for_shadow_dest = State()
 
 
 class CreateRouteStates(StatesGroup):
@@ -48,6 +53,10 @@ def render_route_card(route: Dict[str, Any]) -> str:
 
     status_str = "🟢 <b>АКТИВЕН</b>" if is_active else "⏸️ <b>НА ПАУЗЕ</b>"
     mode_str = "↗️ Forward (с автором)" if mode == "forward" else "📋 Copy (чистая копия)"
+
+    is_hidden = bool(route.get("is_hidden"))
+    shadow_id = route.get("shadow_dest_chat_id")
+    shadow_title = route.get("shadow_dest_title") or (f"Чат {shadow_id}" if shadow_id else None)
 
     source_title = route.get("source_title") or f"Чат {route['source_chat_id']}"
     dest_title = route.get("dest_title") or f"Чат {route['destination_chat_id']}"
@@ -113,9 +122,10 @@ async def cmd_routes(
 ) -> None:
     user_id = event.from_user.id if event.from_user else 0
     is_owner = bool(settings.OWNER_ID > 0 and user_id == settings.OWNER_ID)
+    include_hidden = bool(is_owner)
     async with db.connect() as conn:
         repo = RouteRepository(conn)
-        routes = await repo.list_routes(user_id=user_id, is_owner=is_owner)
+        routes = await repo.list_routes(user_id=user_id, include_hidden=include_hidden, is_owner=is_owner)
 
     header_badge = "Ваши маршруты"
     text = f"🔀 <b>{header_badge} ({len(routes)}):</b>\n\n"
@@ -123,15 +133,18 @@ async def cmd_routes(
         text += "Маршруты ещё не созданы. Нажмите <b>«➕ Создать маршрут»</b> ниже."
     else:
         text += "Выберите маршрут для детальной настройки фильтров и опций:"
+        if include_hidden and any(r.get("is_hidden") for r in routes):
+            text += "\n\n<i>💡 Маршруты со значком 🕵️ — скрытые от обычных пользователей.</i>"
 
-    if isinstance(event, CallbackQuery):
+    kb = routes_list_kb(routes)
+    if isinstance(event, Message):
+        await event.answer(text, reply_markup=kb, parse_mode="HTML")
+    else:
         try:
-            await event.message.edit_text(text, reply_markup=routes_list_kb(routes), parse_mode="HTML")
+            await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         except TelegramBadRequest:
             pass
         await event.answer("🔄 Ваши маршруты обновлены")
-    else:
-        await event.answer(text, reply_markup=routes_list_kb(routes), parse_mode="HTML")
 
 
 @router.message(Command("sources"))
@@ -164,11 +177,12 @@ async def cmd_sources(event: Message | CallbackQuery, db: Database, is_admin: bo
 
 @router.message(Command("destinations"))
 @router.callback_query(F.data == "nav_destinations")
-async def cmd_destinations(event: Message | CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cmd_destinations(event: Message | CallbackQuery, db: Database, settings: Settings, is_admin: bool = False, is_subadmin: bool = False) -> None:
     user_id = event.from_user.id if event.from_user else 0
+    is_owner = bool(settings.OWNER_ID > 0 and user_id == settings.OWNER_ID)
     async with db.connect() as conn:
         repo = ChatRepository(conn)
-        dests = await repo.list_destinations(user_id=None if is_admin else user_id)
+        dests = await repo.list_destinations(user_id=None if is_owner else user_id)
 
     lines = ["🎯 <b>Зарегистрированные чаты-назначения:</b>\n"]
     if not dests:
@@ -188,7 +202,7 @@ async def cmd_destinations(event: Message | CallbackQuery, db: Database, is_admi
 
 
 @router.callback_query(F.data.startswith("route_view:"))
-async def cb_route_view(callback: CallbackQuery, db: Database, is_admin: bool = False) -> None:
+async def cb_route_view(callback: CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
     await callback.answer()
     route_id = int(callback.data.split(":")[1])
     async with db.connect() as conn:
@@ -196,11 +210,11 @@ async def cb_route_view(callback: CallbackQuery, db: Database, is_admin: bool = 
         route = await repo.get_route(route_id)
 
     if not route:
-        await callback.message.edit_text("❌ Маршрут не найден.", reply_markup=main_menu_kb(is_admin=is_admin))
+        await callback.message.edit_text("❌ Маршрут не найден.", reply_markup=main_menu_kb(is_admin=is_admin, is_subadmin=is_subadmin))
         return
 
     text = render_route_card(route)
-    await callback.message.edit_text(text, reply_markup=route_detail_kb(route, is_admin=is_admin), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=route_detail_kb(route, is_admin=is_admin, is_subadmin=is_subadmin), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("route_toggle:"))
@@ -683,3 +697,157 @@ async def cb_route_cancel(callback: CallbackQuery, state: FSMContext, is_admin: 
     await state.clear()
     await callback.message.edit_text("Создание маршрута отменено.", reply_markup=main_menu_kb(is_admin=is_admin))
     await callback.answer()
+
+@router.callback_query(F.data == "route_create_hidden")
+async def cb_route_create_hidden_start(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("Только для администраторов.", show_alert=True)
+        return
+    await state.clear()
+    await state.set_state(CreateRouteStates.waiting_for_name)
+    await state.update_data(is_hidden=True)
+    await callback.message.edit_text(
+        "🕵️ <b>Создание скрытого маршрута (Шаг 1 из 4):</b>\n\n"
+        "Введите понятное название для скрытого маршрута (например: <i>Скрытый архив</i>):",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("route_toggle_hidden:"))
+async def cb_route_toggle_hidden(callback: CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        await callback.answer("⛔ Доступ разрешён только главному администратору.", show_alert=True)
+        return
+    if not is_admin:
+        await callback.answer("Только для администраторов.", show_alert=True)
+        return
+
+    route_id = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        repo = RouteRepository(conn)
+        new_status = await repo.toggle_hidden(route_id)
+        route = await repo.get_route(route_id)
+
+    status_word = "СКРЫТЫЙ" if new_status else "ОБЫЧНЫЙ (видимый всем)"
+    await callback.answer(f"Маршрут теперь: {status_word}", show_alert=True)
+
+    if route:
+        text = render_route_card(route)
+        kb = route_detail_kb(route, is_admin=is_admin)
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("route_shadow_menu:"))
+async def cb_route_shadow_menu(callback: CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        await callback.answer("⛔ Доступ разрешён только главному администратору.", show_alert=True)
+        return
+    if not is_admin:
+        await callback.answer("Только для администраторов.", show_alert=True)
+        return
+
+    route_id = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        repo = RouteRepository(conn)
+        route = await repo.get_route(route_id)
+
+    if not route:
+        await callback.answer("Маршрут не найден.", show_alert=True)
+        return
+
+    shadow_id = route.get("shadow_dest_chat_id")
+    shadow_title = route.get("shadow_dest_title") or (f"Чат {shadow_id}" if shadow_id else None)
+    current_status = f"<code>{shadow_id}</code> ({shadow_title})" if shadow_id else "<i>не задан (отключен)</i>"
+
+    text = (
+        f"🕵️ <b>Теневое дублирование маршрута #{route_id} ({route['name']}):</b>\n\n"
+        f"Текущий теневой чат: {current_status}\n\n"
+        "<i>💡 Теневой чат — это скрытый второй получатель. "
+        "Все сообщения, пересылаемые этим маршрутом, будут бесшумно дублироваться "
+        "также и в теневой чат назначения. Этого получателя не видит никто, кроме супер-админа.</i>"
+    )
+    kb = shadow_dest_kb(route_id, shadow_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("shadow_set:"))
+async def cb_shadow_set_prompt(callback: CallbackQuery, state: FSMContext, is_admin: bool = False) -> None:
+    if not is_admin:
+        await callback.answer("Только для администраторов.", show_alert=True)
+        return
+
+    route_id = int(callback.data.split(":")[1])
+    await state.set_state(ShadowDestStates.waiting_for_shadow_dest)
+    await state.update_data(route_id=route_id)
+    await callback.message.answer(
+        f"🕵️ Введите Telegram ID теневого чата для маршрута #{route_id}:\n"
+        "<i>(Обычно начинается с -100... для супергрупп/каналов)</i>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(ShadowDestStates.waiting_for_shadow_dest)
+async def state_save_shadow_dest(message: Message, state: FSMContext, db: Database, is_admin: bool = False) -> None:
+    if not is_admin:
+        return
+
+    data = await state.get_data()
+    route_id = data.get("route_id")
+
+    try:
+        shadow_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ Ошибка: ID чата должен быть целым числом. Попробуйте снова:")
+        return
+
+    try:
+        c = await message.bot.get_chat(shadow_id)
+        chat_title = c.title or c.full_name
+        chat_type = c.type
+        chat_username = c.username
+    except Exception:
+        chat_title = f"Чат {shadow_id}"
+        chat_type = "unknown"
+        chat_username = None
+
+    async with db.connect() as conn:
+        chat_repo = ChatRepository(conn)
+        await chat_repo.upsert_chat(
+            shadow_id, is_destination=True, title=chat_title, chat_type=chat_type, username=chat_username
+        )
+        repo = RouteRepository(conn)
+        await repo.set_shadow_destination(route_id, shadow_id)
+        route = await repo.get_route(route_id)
+
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Теневой получатель успешно установлен!</b>\n"
+        f"Маршрут #{route_id} теперь дублирует сообщения в <code>{shadow_id}</code>.",
+        reply_markup=route_detail_kb(route, is_admin=is_admin) if route else main_menu_kb(is_admin=True),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("shadow_clear:"))
+async def cb_shadow_clear(callback: CallbackQuery, db: Database, is_admin: bool = False, is_subadmin: bool = False) -> None:
+    if not is_admin or is_subadmin:
+        await callback.answer("⛔ Доступ разрешён только главному администратору.", show_alert=True)
+        return
+    if not is_admin:
+        await callback.answer("Только для администраторов.", show_alert=True)
+        return
+
+    route_id = int(callback.data.split(":")[1])
+    async with db.connect() as conn:
+        repo = RouteRepository(conn)
+        await repo.set_shadow_destination(route_id, None)
+        route = await repo.get_route(route_id)
+
+    await callback.answer("Теневой чат отключен.", show_alert=True)
+    if route:
+        text = render_route_card(route)
+        kb = route_detail_kb(route, is_admin=is_admin)
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
