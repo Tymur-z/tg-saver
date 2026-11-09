@@ -44,11 +44,11 @@ class ProfanityDetector:
 
     # 1. ЖЕСТКИЙ МАТ (HARD)
     HARD_PATTERNS: List[re.Pattern[str]] = [
-        re.compile(r"х+у+[йиеяёюeja]", re.IGNORECASE),
+        re.compile(r"х+у+(?:[йиеяёюeja]|л[иеяёюa-я]*)", re.IGNORECASE),
         re.compile(r"п+и+з+д", re.IGNORECASE),
         re.compile(
             r"\b(?!(?:теб[ея]|себ[ея]|хлеб\w*|стебел\w*|гребл\w*|хребет\w*|треб\w*|потреб\w*|колеб\w*|реб[её]н\w*|судеб\w*|враждеб\w*|учеб\w*|тереб\w*|небоскреб\w*|грабеж\w*|скреб\w*)\b)"
-            r"(?:[а-я]*(?:[еёe]б[аеиоутылaeyut]|[еёe]бл|[еёe]бн|[еёe]бк|[еёe]буч|[еёe]бот)|долбо[еёe]б|выеб\w*|заеб\w*|уеб\w*|наеб\w*|проеб\w*|перееб\w*|въеб\w*|подъеб\w*|\b[еёe]б\b)",
+            r"(?:(?:въ|взъ|подъ|съ|изъ|объ|отъ|разъ|вы|до|за|из|на|недо|пере|под|при|про|раз|у|по|долбо|долба|мозго|само|хуе|пиздо|взд)(?:[еёe]б[а-яa-z]*)|долб[оа][еёe]б|\b[еёe]б[а-яa-z]*\b)",
             re.IGNORECASE,
         ),
         re.compile(r"б+л+я+([дdтt]|ть)?", re.IGNORECASE),
@@ -124,6 +124,14 @@ class ProfanityDetector:
         re.compile(r"^учеб[а-я]*", re.IGNORECASE),
         re.compile(r"^судеб[а-я]*", re.IGNORECASE),
         re.compile(r"^ребенок", re.IGNORECASE),
+        re.compile(r"^мебел[а-я]*", re.IGNORECASE),
+        re.compile(r"^лебед[а-я]*", re.IGNORECASE),
+        re.compile(r"^щебен[а-я]*", re.IGNORECASE),
+        re.compile(r"^жреби[а-я]*", re.IGNORECASE),
+        re.compile(r"^гребеш[а-я]*", re.IGNORECASE),
+        re.compile(r"^молебен[а-я]*", re.IGNORECASE),
+        re.compile(r"^серебр[а-я]*", re.IGNORECASE),
+        re.compile(r"^дебил[а-я]*", re.IGNORECASE),
     ]
 
     def __init__(self, llm_client: Optional[LLMClient] = None, llm_enabled: bool = False) -> None:
